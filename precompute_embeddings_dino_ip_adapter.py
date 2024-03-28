@@ -1,3 +1,4 @@
+# type: ignore
 # Below is ported from open-muse. It assumes we are using finegrained dino image encoder
 
 # This script is used to pre encode coyo, laion 6a, and laion 5a.
@@ -28,71 +29,22 @@
 # laion 6a) 23.4 minutes
 # laion 5a) 19h43m
 
-import random
-from dataclasses import dataclass
-from functools import cached_property
-from typing import Any, List, Callable
 import os
-import datasets
 from loguru import logger
-from PIL import Image
-from pydantic import BaseModel
-from jaxtyping import Float
-from torch import (
-    tensor,
-    Tensor,
-    cat,
-    device as Device,
-    dtype as DType,
-    randn,
-    zeros_like,
-    exp,
-    ones_like,
-    stack,
-    randn_like,
-    no_grad,
-    randint,
-    float32,
-    zeros,
-    ones,
-    norm,
-    multinomial
-)
-from torch.cuda import empty_cache
-from torch.distributions import Beta
-from torch.nn import Module, Linear, Embedding, LayerNorm
-from torch.nn.init import trunc_normal_
-from torch.nn.functional import mse_loss
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset
-from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, CenterCrop, Resize
 from refiners.foundationals.dinov2 import (
-    DINOv2_small,
-    DINOv2_small_reg,
-    DINOv2_base,
-    DINOv2_base_reg,
-    DINOv2_large,
     DINOv2_large_reg,
-    ViT,
 )
 from refiners.foundationals.clip.text_encoder import CLIPTextEncoderL
-from refiners.foundationals.latent_diffusion.cross_attention import CrossAttentionBlock2d
-from refiners.fluxion.utils import image_to_tensor, normalize
+from refiners.fluxion.utils import normalize
 
-import refiners.fluxion.layers as fl
-from refiners.fluxion.utils import save_to_safetensors
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.image_prompt import SD1IPAdapter, get_sd1_image_proj
-from refiners.foundationals.latent_diffusion.solvers.ddpm import DDPM
-from refiners.foundationals.latent_diffusion.solvers.dpm import DPMSolver
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import SD1Autoencoder, SD1UNet, StableDiffusion_1
-from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import TextEncoderWithPoolingL
-from refiners.training_utils.callback import Callback, CallbackConfig
-from refiners.training_utils.config import BaseConfig, ModelConfig
-from refiners.foundationals.latent_diffusion.image_prompt import ImageProjection, PerceiverResampler
+from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
+    SD1Autoencoder,
+)
+from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (
+    TextEncoderWithPoolingL,
+)
 import argparse
 import concurrent.futures
-import logging
-import os
 import re
 from collections import OrderedDict
 from threading import Lock
@@ -113,15 +65,16 @@ CLIP_TEXT_WITH_PROJECTION = "tests/weights/CLIPLWithProjection.safetensors"
 DINO_IMAGE_ENCODER = "tests/weights/dinov2_vitl14_reg4_pretrain.safetensors"
 LDA = "tests/weights/lda.safetensors"
 
-CLIP_TEXT_EXT = f"CLIPL.pth"
-CLIP_TEXT_POOLED_EXT = f"CLIPLPool.pth"
-DINO_IMAGE_ENCODER_EXT = f"dinov2_vitl14_reg4_pretrain.pth"
-DINO_IMAGE_ENCODER_NO_NORM_EXT = f"dinov2_vitl14_reg4_pretrain_no_norm.pth"
-LDA_EXT = f"sd15_lda.pth"
+CLIP_TEXT_EXT = "CLIPL.pth"
+CLIP_TEXT_POOLED_EXT = "CLIPLPool.pth"
+DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
+DINO_IMAGE_ENCODER_NO_NORM_EXT = "dinov2_vitl14_reg4_pretrain_no_norm.pth"
+LDA_EXT = "sd15_lda.pth"
 
 PHOTO_CONCEPT = "gs://bounty-program-data/photo-concept-bucket-webdataset"
-PHOTO_CONCEPT_PREENCODED = "gs://bounty-program-data/photo-concept-bucket-webdataset_preencoded"
-logger = logging.getLogger(__name__)
+PHOTO_CONCEPT_PREENCODED = (
+    "gs://bounty-program-data/photo-concept-bucket-webdataset_preencoded"
+)
 
 tar_regex = r"\/([^\/]+\.tar)"
 
@@ -174,7 +127,9 @@ class Uploads:
         self.upload_to = upload_to
         self.futures = []
         self.num_writing_threads = num_writing_threads
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.num_writing_threads)
+        self.executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.num_writing_threads
+        )
 
     def __enter__(self):
         return self
@@ -334,7 +289,15 @@ def distribute_shards(start_shard_all, end_shard_all, slurm_ntasks):
         end_shard = start_shard + shards_per_task[slurm_procid] - 1
         distributed_shards.append((start_shard, end_shard))
 
-    assert sum([end_shard - start_shard + 1 for start_shard, end_shard in distributed_shards]) == total_shards
+    assert (
+        sum(
+            [
+                end_shard - start_shard + 1
+                for start_shard, end_shard in distributed_shards
+            ]
+        )
+        == total_shards
+    )
 
     return distributed_shards
 
@@ -371,13 +334,25 @@ def main():
         ),
     )
     parser.add_argument(
-        "--batch_size", type=int, help="The batch size to encode at a time", required=False, default=160
+        "--batch_size",
+        type=int,
+        help="The batch size to encode at a time",
+        required=False,
+        default=160,
     )
     parser.add_argument(
-        "--resolution", type=int, help="The resolution to convert the image to.", required=False, default=518
+        "--resolution",
+        type=int,
+        help="The resolution to convert the image to.",
+        required=False,
+        default=518,
     )
     parser.add_argument(
-        "--lda_resolution", type=int, help="The resolution to convert the image to.", required=False, default=512
+        "--lda_resolution",
+        type=int,
+        help="The resolution to convert the image to.",
+        required=False,
+        default=512,
     )
     parser.add_argument(
         "--skip_upload",
@@ -414,7 +389,6 @@ def main():
     else:
         assert False
 
-
     logger.warning("********************")
     logger.warning("Pre-encoding dataset")
     logger.warning(f"dataset: {args.dataset}")
@@ -428,7 +402,9 @@ def main():
         slurm_procid = int(os.environ["SLURM_PROCID"])
         slurm_ntasks = int(os.environ["SLURM_NTASKS"])
 
-        distributed_shards = distribute_shards(args.start_shard, args.end_shard, slurm_ntasks)
+        distributed_shards = distribute_shards(
+            args.start_shard, args.end_shard, slurm_ntasks
+        )
 
         start_shard_task, end_shard_task = distributed_shards[slurm_procid]
 
@@ -441,9 +417,11 @@ def main():
         logger.warning(f"SLURM_PROCID: {slurm_procid}")
         logger.warning(f"start_shard: {start_shard_task}, end_shard: {end_shard_task}")
         logger.warning("************")
-        logger.warning(f"all slurm processes")
+        logger.warning("all slurm processes")
         for slurm_proc_id_, (start_shard, end_shard) in enumerate(distributed_shards):
-            logger.warning(f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}")
+            logger.warning(
+                f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}"
+            )
         logger.warning("************")
     lda = SD1Autoencoder(
         device="cuda",
@@ -469,7 +447,13 @@ def main():
     image_encoder.requires_grad_(False)
     image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
 
-    shard_range = "{" + format_shard_number(args.start_shard) + ".." + format_shard_number(args.end_shard) + "}"
+    shard_range = (
+        "{"
+        + format_shard_number(args.start_shard)
+        + ".."
+        + format_shard_number(args.end_shard)
+        + "}"
+    )
     download_shards = f"pipe:gsutil cp {args.dataset}/{shard_range}.tar -"
 
     logger.warning(f"downloading shards {download_shards}")
@@ -501,13 +485,14 @@ def main():
 
     with Uploads(args.skip_upload, upload_to, args.num_writing_threads) as uploads:
         for __key__, __url__, image, prompt, metadata in src:
-            logger.warning(f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}.")
+            logger.warning(
+                f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
+            )
 
             encoder_hidden_states, pooled_text_embedding = text_encoder(prompt)
 
             all_images = []
             lda_images = []
-
 
             for image_ in image:
                 # The following is minorly more efficient than the default
@@ -536,17 +521,27 @@ def main():
                 image_ = image_.to(dtype=torch.float32).div(255)
 
                 lda_image_ = TF.resize(
-                    image_, size=args.lda_resolution, interpolation=InterpolationMode.BILINEAR, antialias=True
+                    image_,
+                    size=args.lda_resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
                 )
 
                 lda_image_ = TF.center_crop(image_, args.lda_resolution)
-                lda_images.append(2*lda_image_-1)
+                lda_images.append(2 * lda_image_ - 1)
                 image_ = TF.resize(
-                    image_, size=args.resolution, interpolation=InterpolationMode.BILINEAR, antialias=True
+                    image_,
+                    size=args.resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
                 )
 
                 image_ = TF.center_crop(image_, args.resolution)
-                image_ = normalize(image_, mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
+                image_ = normalize(
+                    image_,
+                    mean=[0.48145466, 0.4578275, 0.40821073],
+                    std=[0.26862954, 0.26130258, 0.27577711],
+                )
                 all_images.append(image_)
 
             image = torch.stack(all_images)
@@ -554,7 +549,6 @@ def main():
             encoded_image_dino = image_encoder(image)
             encoded_image_dino_no_norm = image_encoder_no_norm(image)
             encoded_image_lda = lda.encode(lda_image)
-
 
             uploads.submit(
                 __key__,

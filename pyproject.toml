@@ -1,9 +1,9 @@
 [project]
 name = "dino-ip-adapter-refiners"
 version = "0.1.0"
-description = "Add your description here"
+description = "Training and inference code for DINO-IP Adapter with the Refiners micro-framework"
 authors = [
-    { name = "limiteinductive", email = "benjamintrom@gmail.com" }
+    { name = "isamu", email = "isamu.website@gmail.com" }
 ]
 dependencies = [
     "refiners @ git+https://github.com/finegrain-ai/refiners.git@2b48988c078a1f570aeaf9366074f5cc77921599",
@@ -27,3 +27,9 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dino_ip_adapter_refiners"]
+
+[tool.pyright]
+include = ["src/refiners", "tests", "scripts"]
+strict = ["*"]
+exclude = ["**/__pycache__", "tests/weights"]
+reportMissingTypeStubs = "warning"

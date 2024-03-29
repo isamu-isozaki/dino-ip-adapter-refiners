@@ -6,7 +6,7 @@ class Batch(BaseBatch):
     """Structure of the data in the IPDataset."""
 
     latent: torch.Tensor
-    image_embedding: torch.Tensor
+    dino_embedding: torch.Tensor
 
 
 class WebdatasetDataMixin:

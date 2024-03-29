@@ -34,13 +34,17 @@ class Trainer(
         timesteps = sample_timesteps(
             batch_size, sampler=TimestepSampler.UNIFORM, device=self.device
         )
+        self.unet.set_context("timesteps", timesteps)
+
         noise = sample_noise(batch.latent.shape, device=self.device, dtype=self.dtype)
         noisy_latent = add_noise_to_latents(
             latents=batch.latent, noise=noise, solver=self.solver, timesteps=timesteps
         )
 
-        self.unet.set_context("timesteps", timesteps)
-        self.unet.set_context("ip_adapter", batch.image_embedding)
+        image_embedding = self.ip_adapter.get_image_embedding(
+            batch.dino_embedding, drop_rate=0.1
+        )
+        self.ip_adapter.set_image_context(image_embedding)
 
         predicted_noise = self.unet(noisy_latent)
         loss = F.mse_loss(input=predicted_noise, target=noise, reduction="none")

@@ -1,6 +1,8 @@
 from typing import Any
+from torch import nn
+import torch
+from refiners.foundationals.latent_diffusion.cross_attention import CrossAttentionBlock
 from refiners.foundationals.latent_diffusion.image_prompt import PerceiverResampler
-from torch import device as Device, dtype as DType
 from refiners.fluxion.adapters import Adapter
 from refiners.foundationals.latent_diffusion import SD1UNet
 from refiners.training_utils import register_model
@@ -10,104 +12,68 @@ from refiners.fluxion import layers as fl
 from dino_ip_adapter_refiners.config import IPAdapterConfig
 
 
-class ImageCrossAttention(fl.Chain):
+class CrossAttentionAdapter(fl.Chain, Adapter[CrossAttentionBlock]):
     def __init__(
         self,
-        query_matrix: fl.Linear,
-        /,
-        dim: int = 1024,
-        num_heads: int = 64,
-        scale: float = 1.0,
-        device: Device | str | None = None,
-        dtype: DType | None = None,
-    ) -> None:
-        self.dim = dim
-        self._multiply = [fl.Multiply(scale)]
-        super().__init__(
-            fl.Distribute(
-                query_matrix,
-                fl.Chain(
-                    fl.UseContext(context="ip_adapter", key="clip_image_embedding"),
-                    fl.Linear(
-                        in_features=dim,
-                        out_features=dim,
-                        device=device,
-                        dtype=dtype,
-                    ),
-                ),
-                fl.Chain(
-                    fl.UseContext(context="ip_adapter", key="clip_image_embedding"),
-                    fl.Linear(
-                        in_features=dim,
-                        out_features=dim,
-                        device=device,
-                        dtype=dtype,
-                    ),
-                ),
-            ),
-            fl.ScaledDotProductAttention(num_heads=num_heads),
-            self.multiply,
-        )
-
-    @property
-    def multiply(self) -> fl.Multiply:
-        return self._multiply[0]
-
-    @property
-    def scale(self) -> float:
-        return self.multiply.scale
-
-    @scale.setter
-    def scale(self, value: float) -> None:
-        self.multiply.scale = value
-
-    @property
-    def key_projection(self) -> fl.Linear:
-        return self.layer(("Distribute", 1, "Linear"), fl.Linear)
-
-    @property
-    def value_projection(self) -> fl.Linear:
-        return self.layer(("Distribute", 2, "Linear"), fl.Linear)
-
-    def enable_gradients(self, requires_grad: bool = True, /) -> None:
-        self.key_projection.requires_grad_(requires_grad=requires_grad)
-        self.value_projection.requires_grad_(requires_grad=requires_grad)
-
-
-class CrossAttentionAdapter(fl.Chain, Adapter[fl.Attention]):
-    def __init__(
-        self,
-        target: fl.Attention,
-        scale: float = 1.0,
+        target: CrossAttentionBlock,
     ) -> None:
         with self.setup_adapter(target):
-            query_matrix = target.layer(("Distribute", 0, "Linear"), fl.Linear)
+            cross_attention = target.layer(1, fl.Residual)
+            layer_norm = cross_attention.layer(0, fl.LayerNorm)
+            attention = cross_attention.layer(2, fl.Attention).structural_copy()
+
+            distribute = attention.layer(0, fl.Distribute)
+            query_matrix = distribute.layer((0), fl.Linear)
+            self._key_matrix = [
+                fl.Linear(
+                    in_features=1024,
+                    out_features=query_matrix.out_features,
+                    device=target.device,
+                    dtype=target.dtype,
+                )
+            ]
+            self._value_matrix = [
+                fl.Linear(
+                    in_features=1024,
+                    out_features=query_matrix.out_features,
+                    device=target.device,
+                    dtype=target.dtype,
+                )
+            ]
+
+            new_distribute = fl.Distribute(
+                query_matrix,
+                self.key_matrix,
+                self.value_matrix,
+            )
+
+            attention.replace(distribute, new_distribute)
 
             super().__init__(
-                ImageCrossAttention(
-                    query_matrix,
-                    scale=scale,
+                layer_norm,
+                fl.Parallel(
+                    fl.Identity(),
+                    fl.UseContext(context="ip_adapter", key="image_embedding"),
+                    fl.UseContext(context="ip_adapter", key="image_embedding"),
                 ),
+                attention,
             )
 
     @property
-    def image_cross_attention(self) -> ImageCrossAttention:
-        return self.layer(0, ImageCrossAttention)
+    def key_matrix(self) -> fl.Linear:
+        return self._key_matrix[0]
 
     @property
-    def scale(self) -> float:
-        return self.image_cross_attention.scale
+    def value_matrix(self) -> fl.Linear:
+        return self._value_matrix[0]
 
-    @scale.setter
-    def scale(self, value: float) -> None:
-        self.image_cross_attention.scale = value
-
-    def enable_gradients(self, requires_grad: bool = True, /) -> None:
-        self.image_cross_attention.enable_gradients(requires_grad)
+    def enable_gradients(self, enable: bool) -> None:
+        self.key_matrix.weight.requires_grad_(enable)
+        self.value_matrix.weight.requires_grad_(enable)
 
 
 class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet, scale: float = 1.0) -> None:
+    def __init__(self, target: SD1UNet) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
 
@@ -124,22 +90,46 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                 dtype=target.dtype,
             )
         ]
+        self._unconditional_image_embedding = [
+            nn.Parameter(
+                torch.randn(1, 128, 1024, device=target.device, dtype=target.dtype)
+            )
+        ]
 
         self.sub_adapters = [
-            CrossAttentionAdapter(cross_attn, scale=scale)
-            for cross_attn in filter(
-                lambda attn: type(attn) != fl.SelfAttention, target.layers(fl.Attention)
-            )
+            CrossAttentionAdapter(cross_attn)
+            for cross_attn in target.layers(CrossAttentionBlock)
         ]
 
     @property
     def image_proj(self) -> PerceiverResampler:
         return self._image_proj[0]
 
-    def enable_gradients(self, requires_grad: bool = True, /) -> None:
-        self.image_proj.requires_grad_(requires_grad=requires_grad)
+    @property
+    def unconditional_image_embedding(self) -> torch.Tensor:
+        return self._unconditional_image_embedding[0]
+
+    def inject(self, parent: fl.Chain | None = None):
         for sub_adapter in self.sub_adapters:
-            sub_adapter.enable_gradients(requires_grad)
+            sub_adapter.inject(self)
+
+        return self
+
+    def enable_gradients(self, enable: bool) -> None:
+        self.image_proj.requires_grad_(enable)
+        for sub_adapter in self.sub_adapters:
+            sub_adapter.enable_gradients(enable)
+
+    def get_image_embedding(
+        self, dino_embedding: torch.Tensor, /, drop_rate: float = 0.1
+    ) -> torch.Tensor:
+        if torch.rand(1) > drop_rate:
+            return self.image_proj(dino_embedding)
+
+        return self.unconditional_image_embedding
+
+    def set_image_context(self, image_embedding: torch.Tensor, /) -> None:
+        self.set_context("ip_adapter", {"image_embedding": image_embedding})
 
 
 class IPAdapterMixin:
@@ -147,7 +137,23 @@ class IPAdapterMixin:
     def ip_adapter(self: Any, config: IPAdapterConfig) -> DinoIPAdapter:
         ip_adapter = DinoIPAdapter(
             target=self.unet,
-        )
+        ).inject()
         ip_adapter.enable_gradients(True)
-        ip_adapter.inject()
         return ip_adapter
+
+
+if __name__ == "__main__":
+    import torch
+
+    unet = SD1UNet(4)
+    adapter = DinoIPAdapter(unet).inject()
+
+    timestep = torch.randn(1, 1)
+    unet.set_timestep(timestep)
+
+    dino_embedding = torch.randn(1, 1370, 1024)
+    image_embedding = adapter.image_proj(dino_embedding)
+    unet.set_context("ip_adapter", {"image_embedding": image_embedding})
+
+    x = torch.randn(1, 4, 32, 32)
+    y = adapter(x)

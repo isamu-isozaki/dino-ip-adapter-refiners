@@ -9,6 +9,7 @@ from refiners.training_utils import (
 from refiners.training_utils.common import TimeUnit, TimeValue
 from dino_ip_adapter_refiners.config import Config, IPAdapterConfig
 from dino_ip_adapter_refiners.trainer import Trainer
+import sys
 
 if __name__ == "__main__":
     config = Config(
@@ -36,6 +37,8 @@ if __name__ == "__main__":
             entity="ben-selas",
         )
     )
+    config_path = sys.argv[1]
+    config = AdapterLatentDiffusionConfig.load_from_toml(toml_path=config_path)
     trainer = Trainer(config)
 
     trainer.train()

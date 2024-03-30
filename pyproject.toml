@@ -10,6 +10,7 @@ dependencies = [
     "tqdm>=4.66.2",
     "python-dotenv>=1.0.1",
     "webdataset>=0.2.86",
+    "mosaicml-streaming"
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

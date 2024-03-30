@@ -36,6 +36,7 @@ from refiners.foundationals.dinov2 import (
 )
 from refiners.fluxion.utils import normalize
 from refiners.fluxion import layers as fl
+from refiners.foundationals.clip.text_encoder import CLIPTextEncoderL
 
 from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
     SD1Autoencoder,
@@ -60,8 +61,11 @@ torch.no_grad().__enter__()
 
 DINO_IMAGE_ENCODER = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 LDA = "checkpoints/lda.safetensors"
+CLIP_TEXT_WITH_PROJECTION = "checkpoints/CLIPTextEncoderL.safetensors"
+
 DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
 LDA_EXT = "sd15_lda.pth"
+CLIP_TEXT_EXT = "CLIPL.pth"
 
 config = dotenv_values(".env")
 
@@ -149,6 +153,7 @@ class Uploads:
         encoded_image_dino,
         encoded_image_lda,
         metadata,
+        encoder_hidden_states=None
     ):
         future = self.executor.submit(
             self._upload_thread_entrypoint,
@@ -157,6 +162,7 @@ class Uploads:
             encoded_image_dino,
             encoded_image_lda,
             metadata,
+            encoder_hidden_states=encoder_hidden_states
         )
 
         self.futures.append(future)
@@ -172,26 +178,32 @@ class Uploads:
         __url__,
         encoded_image_dinos,
         encoded_image_ldas,
-        metadata,
+        metadatas,
+        encoder_hidden_states=None
     ):
         encoded_image_dinos = torch.unbind(encoded_image_dinos)
         encoded_image_ldas = torch.unbind(encoded_image_ldas)
+        if encoder_hidden_states is not None:
+            encoder_hidden_states = torch.unbind(encoder_hidden_states)
 
-        for (
+        for i, (
             __key__,
             __url__,
             encoded_image_dino,
             encoded_image_lda,
             metadata,
-        ) in zip(
+        ) in enumerate(zip(
             __key__,
             __url__,
             encoded_image_dinos,
             encoded_image_ldas,
-            metadata,
-        ):
+            metadatas,
+        )):
             encoded_image_dino = encoded_image_dino.clone().to("cpu")
             encoded_image_lda = encoded_image_lda.clone().to("cpu")
+            encoder_hidden_state = None
+            if encoder_hidden_states is not None:
+                encoder_hidden_state = encoder_hidden_states[i].clone().to("cpu")
 
             if self.skip_upload:
                 continue
@@ -230,6 +242,8 @@ class Uploads:
                 LDA_EXT: encoded_image_lda,
                 "json": metadata,
             }
+            if encoder_hidden_state is not None:
+                sample[CLIP_TEXT_EXT] = encoder_hidden_state
 
             # Not locking around the write will corrupt the tar file
             upload["lock"].acquire()
@@ -337,6 +351,11 @@ def main():
         required=False,
         default=40,
     )
+    parser.add_argument(
+        "--encode_prompt",
+        type=bool,
+        action="store_true"
+    )
 
     args = parser.parse_args()
 
@@ -395,6 +414,11 @@ def main():
                 f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}"
             )
         logger.warning("************")
+    if args.encode_prompt:
+        text_encoder = CLIPTextEncoderL().to("cuda")
+        text_encoder.requires_grad_(False)
+        text_encoder.load_from_safetensors(CLIP_TEXT_WITH_PROJECTION)
+
     lda = SD1Autoencoder(
         device="cuda",
     )
@@ -448,7 +472,9 @@ def main():
             logger.warning(
                 f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
             )
-
+            encoder_hidden_states = None
+            if args.encode_prompt:
+                encoder_hidden_states = text_encoder(prompt)
             all_images = []
             lda_images = []
 
@@ -485,7 +511,7 @@ def main():
                     antialias=True,
                 )
 
-                lda_image_ = TF.center_crop(image_, args.lda_resolution)
+                lda_image_ = TF.center_crop(lda_image_, args.lda_resolution)
                 lda_images.append(2 * lda_image_ - 1)
                 image_ = TF.resize(
                     image_,
@@ -513,6 +539,7 @@ def main():
                 encoded_image_dino,
                 encoded_image_lda,
                 metadata,
+                encoder_hidden_states=encoder_hidden_states
             )
 
 

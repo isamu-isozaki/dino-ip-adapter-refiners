@@ -54,6 +54,7 @@ import webdataset as wds
 from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode
 from dotenv import dotenv_values
+from streaming import MDSWriter
 
 
 torch.set_float32_matmul_precision("high")
@@ -61,7 +62,7 @@ torch.no_grad().__enter__()
 
 DINO_IMAGE_ENCODER = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 LDA = "checkpoints/lda.safetensors"
-CLIP_TEXT_WITH_PROJECTION = "checkpoints/CLIPTextEncoderL.safetensors"
+CLIP_TEXT_ENCODER = "checkpoints/CLIPTextEncoderL.safetensors"
 
 DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
 LDA_EXT = "sd15_lda.pth"
@@ -120,11 +121,22 @@ class Uploads:
     because writes are not thread safe and can corrupt the archive.
     """
 
-    def __init__(self, skip_upload, upload_to, num_writing_threads):
+    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic, compression=""):
         self.open_lock = Lock()
         self.uploads = OrderedDict()
         self.skip_upload = skip_upload
         self.upload_to = upload_to
+        self.use_mosaic = use_mosaic
+        if len(compression) == 0:
+            self.compression = None
+        self.compression = compression
+        self.columns = {
+            "__key__": "str",
+            DINO_IMAGE_ENCODER_EXT.lower(): "ndarray",
+            LDA.lower(): "ndarray",
+            DINO_IMAGE_ENCODER_EXT.lower(): "ndarray",
+            "json": "json"
+        }
         self.futures = []
         self.num_writing_threads = num_writing_threads
         self.executor = concurrent.futures.ThreadPoolExecutor(
@@ -221,12 +233,15 @@ class Uploads:
                     key = next(iter(self.uploads.keys()))
                     self.uploads[key]["writer"].close()
                     del self.uploads[key]
+                upload_file_name = f"{self.upload_to}/{tar_file_name}"
+                upload_command = f"pipe:gsutil cp - {upload_file_name}"
+                if self.use_mosaic:
+                    upload_file_name = upload_file_name.replace(".tar", ".mds")
 
-                upload_command = f"pipe:gsutil cp - {self.upload_to}/{tar_file_name}"
                 logger.warning(f"opening new writer for {upload_command}")
 
                 self.uploads[tar_file_name] = {
-                    "writer": wds.TarWriter(upload_command),
+                    "writer": MDSWriter(out=upload_file_name, columns=self.columns, compression=self.compression) if self.use_mosaic else wds.TarWriter(upload_command),
                     "lock": Lock(),
                 }
 
@@ -238,13 +253,16 @@ class Uploads:
 
             sample = {
                 "__key__": __key__,
-                DINO_IMAGE_ENCODER_EXT: encoded_image_dino,
-                LDA_EXT: encoded_image_lda,
+                DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_dino,
+                LDA_EXT.lower(): encoded_image_lda,
                 "json": metadata,
             }
             if encoder_hidden_state is not None:
-                sample[CLIP_TEXT_EXT] = encoder_hidden_state
-
+                sample[CLIP_TEXT_EXT.lower()] = encoder_hidden_state
+            if self.use_mosaic:
+                for key in sample:
+                    if isinstance(sample[key], torch.Tensor):
+                        sample[key] = sample[key].numpy()
             # Not locking around the write will corrupt the tar file
             upload["lock"].acquire()
             upload["writer"].write(sample)
@@ -356,6 +374,16 @@ def main():
         type=bool,
         action="store_true"
     )
+    parser.add_argument(
+        "--use_mosaic",
+        type=bool,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--compression",
+        type=str,
+        default=""
+    )
 
     args = parser.parse_args()
 
@@ -417,7 +445,7 @@ def main():
     if args.encode_prompt:
         text_encoder = CLIPTextEncoderL().to("cuda")
         text_encoder.requires_grad_(False)
-        text_encoder.load_from_safetensors(CLIP_TEXT_WITH_PROJECTION)
+        text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
 
     lda = SD1Autoencoder(
         device="cuda",
@@ -467,7 +495,7 @@ def main():
         num_workers=0,
     )
 
-    with Uploads(args.skip_upload, upload_to, args.num_writing_threads) as uploads:
+    with Uploads(args.skip_upload, upload_to, args.num_writing_threads, args.use_mosaic, compression=args.compression) as uploads:
         for __key__, __url__, image, prompt, metadata in src:
             logger.warning(
                 f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."

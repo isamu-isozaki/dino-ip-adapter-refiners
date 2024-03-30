@@ -238,7 +238,7 @@ class Uploads:
                 if self.use_mosaic:
                     upload_file_name = upload_file_name.replace(".tar", ".mds")
 
-                logger.warning(f"opening new writer for {upload_command}")
+                logger.warning(f"opening new writer for {upload_file_name}")
 
                 self.uploads[tar_file_name] = {
                     "writer": MDSWriter(out=upload_file_name, columns=self.columns, compression=self.compression) if self.use_mosaic else wds.TarWriter(upload_command),

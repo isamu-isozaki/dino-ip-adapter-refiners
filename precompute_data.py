@@ -156,7 +156,7 @@ class Uploads:
         # Close all unclosed file writes
         for tar_file_name, tar_writer in self.uploads.items():
             if self.use_mosaic:
-                tar_writer["writer"].__exit__()
+                tar_writer["writer"].__exit__(exc_type, exc_val, exc_tb)
             else:
                 tar_writer["writer"].close()
 
@@ -236,7 +236,7 @@ class Uploads:
                     # kick out the earliest one
                     key = next(iter(self.uploads.keys()))
                     if self.use_mosaic:
-                        self.uploads[key]["writer"].__exit__()
+                        self.uploads[key]["writer"].__exit__(None, None, None)
                     else:
                         self.uploads[key]["writer"].close()
                     del self.uploads[key]

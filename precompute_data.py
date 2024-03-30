@@ -371,12 +371,10 @@ def main():
     )
     parser.add_argument(
         "--encode_prompt",
-        type=bool,
         action="store_true"
     )
     parser.add_argument(
         "--use_mosaic",
-        type=bool,
         action="store_true"
     )
     parser.add_argument(

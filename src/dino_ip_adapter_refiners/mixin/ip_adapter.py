@@ -16,6 +16,7 @@ class CrossAttentionAdapter(fl.Chain, Adapter[CrossAttentionBlock]):
     def __init__(
         self,
         target: CrossAttentionBlock,
+        use_timestep_embedding: bool = False
     ) -> None:
         with self.setup_adapter(target):
             cross_attention = target.layer(1, fl.Residual)
@@ -72,8 +73,8 @@ class CrossAttentionAdapter(fl.Chain, Adapter[CrossAttentionBlock]):
         self.value_matrix.weight.requires_grad_(enable)
 
 
-class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet) -> None:
+class DinoOnlyIPAdapter(Adapter[SD1UNet], fl.Chain):
+    def __init__(self, target: SD1UNet, use_timestep_embedding: bool = False) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
 
@@ -97,7 +98,7 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
         ]
 
         self.sub_adapters = [
-            CrossAttentionAdapter(cross_attn)
+            CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding)
             for cross_attn in target.layers(CrossAttentionBlock)
         ]
 
@@ -134,8 +135,8 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
 
 class IPAdapterMixin:
     @register_model()
-    def ip_adapter(self: Any, config: IPAdapterConfig) -> DinoIPAdapter:
-        ip_adapter = DinoIPAdapter(
+    def ip_adapter(self: Any, config: IPAdapterConfig) -> DinoOnlyIPAdapter:
+        ip_adapter = DinoOnlyIPAdapter(
             target=self.unet,
         ).inject()
         ip_adapter.enable_gradients(True)

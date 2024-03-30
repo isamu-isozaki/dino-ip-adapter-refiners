@@ -49,7 +49,7 @@ Google Cloud Storage for this purpose.
 Run the following command to precompute the features for the dataset:
 
 ```bash
-python precompute_new.py --dataset photo_concept --start_shard 0 --end_shard 57 --batch_size 32
+python precompute_data.py --dataset photo_concept --start_shard 0 --end_shard 57 --batch_size 32
 ```
 
 Batch size can be adjusted to fit the memory of the machine, 32 works for 40GB of memory.

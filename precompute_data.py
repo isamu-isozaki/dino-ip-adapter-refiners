@@ -121,7 +121,7 @@ class Uploads:
     because writes are not thread safe and can corrupt the archive.
     """
 
-    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic, compression=""):
+    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="", encode_prompt=False):
         self.open_lock = Lock()
         self.uploads = OrderedDict()
         self.skip_upload = skip_upload
@@ -133,10 +133,11 @@ class Uploads:
         self.columns = {
             "__key__": "str",
             DINO_IMAGE_ENCODER_EXT.lower(): "ndarray",
-            LDA.lower(): "ndarray",
-            DINO_IMAGE_ENCODER_EXT.lower(): "ndarray",
+            LDA_EXT.lower(): "ndarray",
             "json": "json"
         }
+        if encode_prompt:
+            self.columns[CLIP_TEXT_EXT.lower()] = "ndarray"
         self.futures = []
         self.num_writing_threads = num_writing_threads
         self.executor = concurrent.futures.ThreadPoolExecutor(
@@ -493,7 +494,7 @@ def main():
         num_workers=0,
     )
 
-    with Uploads(args.skip_upload, upload_to, args.num_writing_threads, args.use_mosaic, compression=args.compression) as uploads:
+    with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
         for __key__, __url__, image, prompt, metadata in src:
             logger.warning(
                 f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."

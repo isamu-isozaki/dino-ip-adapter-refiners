@@ -155,7 +155,10 @@ class Uploads:
 
         # Close all unclosed file writes
         for tar_file_name, tar_writer in self.uploads.items():
-            tar_writer["writer"].close()
+            if self.use_mosaic:
+                tar_writer["writer"].__exit__()
+            else:
+                tar_writer["writer"].close()
 
         return False
 

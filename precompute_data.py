@@ -235,7 +235,10 @@ class Uploads:
                 if len(self.uploads) == 5:
                     # kick out the earliest one
                     key = next(iter(self.uploads.keys()))
-                    self.uploads[key]["writer"].close()
+                    if self.use_mosaic:
+                        self.uploads[key]["writer"].__exit__()
+                    else:
+                        self.uploads[key]["writer"].close()
                     del self.uploads[key]
                 upload_file_name = f"{self.upload_to}/{tar_file_name}"
                 upload_command = f"pipe:gsutil cp - {upload_file_name}"

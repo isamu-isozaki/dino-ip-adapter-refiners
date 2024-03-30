@@ -1,3 +1,14 @@
+# wandb
+wandb/
+
+# weights
+*.safetensors
+
+# rye and ruff stuff
+.ruff_cache/
+.python-version
+*.lock
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

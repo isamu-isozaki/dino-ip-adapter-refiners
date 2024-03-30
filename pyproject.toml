@@ -8,6 +8,8 @@ authors = [
 dependencies = [
     "refiners[training] @ git+https://github.com/finegrain-ai/refiners.git@2b48988c078a1f570aeaf9366074f5cc77921599",
     "tqdm>=4.66.2",
+    "python-dotenv>=1.0.1",
+    "webdataset>=0.2.86",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

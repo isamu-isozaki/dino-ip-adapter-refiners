@@ -4,6 +4,7 @@ from refiners.training_utils import (
     OptimizerConfig,
     Optimizers,
     TrainingConfig,
+    WandbConfig,
 )
 from refiners.training_utils.common import TimeUnit, TimeValue
 from dino_ip_adapter_refiners.config import Config, IPAdapterConfig
@@ -15,8 +16,8 @@ if __name__ == "__main__":
             device="cuda",
             dtype="bfloat16",
             duration=TimeValue(number=10, unit=TimeUnit.EPOCH),
-            batch_size=32,
-            gradient_clipping_max_norm=1.0,
+            batch_size=46,
+            gradient_clipping_max_norm=2.0,
         ),
         optimizer=OptimizerConfig(
             optimizer=Optimizers.AdamW8bit,
@@ -25,10 +26,15 @@ if __name__ == "__main__":
             weight_decay=1e-2,
         ),
         lr_scheduler=LRSchedulerConfig(
-            type=LRSchedulerType.COSINE_ANNEALING_LR,
+            type=LRSchedulerType.CONSTANT_LR,
             warmup=TimeValue(number=200, unit=TimeUnit.STEP),
         ),
         ip_adapter=IPAdapterConfig(),
+        wandb=WandbConfig(
+            mode="online",
+            project="debug-dino-ip-adapter-refiners",
+            entity="ben-selas",
+        )
     )
     trainer = Trainer(config)
 

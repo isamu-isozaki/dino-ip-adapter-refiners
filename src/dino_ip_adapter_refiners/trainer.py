@@ -1,7 +1,9 @@
+from functools import cached_property
+from refiners.foundationals.latent_diffusion import SD1UNet
 from refiners.foundationals.latent_diffusion.solvers import DDPM
 import torch
 from torch.nn import functional as F
-from refiners.training_utils import Trainer as AbstractTrainer
+from refiners.training_utils import Trainer as AbstractTrainer, WandbMixin
 from dino_ip_adapter_refiners.config import Config
 from dino_ip_adapter_refiners.diffusion_utils import (
     scale_loss,
@@ -11,7 +13,6 @@ from dino_ip_adapter_refiners.diffusion_utils import (
     TimestepSampler,
     LossScaler,
 )
-from dino_ip_adapter_refiners.mixin.sd1 import SD1Mixin
 from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
 from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
 from dino_ip_adapter_refiners.mixin.webdataset_data import WebdatasetDataMixin, Batch
@@ -19,22 +20,26 @@ from dino_ip_adapter_refiners.mixin.webdataset_data import WebdatasetDataMixin, 
 
 class Trainer(
     WebdatasetDataMixin,
-    SD1Mixin,
     EvaluationMixin,
     IPAdapterMixin,
+    WandbMixin,
     AbstractTrainer[Config, Batch],
 ):
+    @cached_property
+    def unet(self) -> SD1UNet:
+        return SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
+    
     @property
     def solver(self) -> DDPM:
         return DDPM(1000, device=self.device)
 
     def compute_loss(self, batch: Batch) -> torch.Tensor:
-        batch_size = len(batch)
+        batch = batch.to(device=self.device, dtype=self.dtype)
 
         timesteps = sample_timesteps(
-            batch_size, sampler=TimestepSampler.UNIFORM, device=self.device
+            len(batch), sampler=TimestepSampler.UNIFORM, device=self.device
         )
-        self.unet.set_context("timesteps", timesteps)
+        self.unet.set_timestep(timesteps)
 
         noise = sample_noise(batch.latent.shape, device=self.device, dtype=self.dtype)
         noisy_latent = add_noise_to_latents(

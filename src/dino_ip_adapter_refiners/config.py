@@ -1,4 +1,4 @@
-from refiners.training_utils import BaseConfig, ModelConfig
+from refiners.training_utils import BaseConfig, ModelConfig, WandbConfig
 
 
 class IPAdapterConfig(ModelConfig):
@@ -7,3 +7,4 @@ class IPAdapterConfig(ModelConfig):
 
 class Config(BaseConfig):
     ip_adapter: IPAdapterConfig
+    wandb: WandbConfig

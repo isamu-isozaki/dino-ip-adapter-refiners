@@ -138,6 +138,8 @@ class Uploads:
         }
         if encode_prompt:
             self.columns[CLIP_TEXT_EXT.lower()] = "ndarray"
+        if use_mosaic:
+            self.mosaic_writer = MDSWriter(out=self.upload_to+".mds", columns=self.columns, compression=self.compression)
         self.futures = []
         self.num_writing_threads = num_writing_threads
         self.executor = concurrent.futures.ThreadPoolExecutor(
@@ -225,37 +227,6 @@ class Uploads:
                 continue
 
             tar_file_name = get_tar_file_name(__url__)
-
-            # It is not strictly clear to me if it is necessary to lock this whole block or
-            # just part(s) of the kickout/create new writer. Just lock the whole function to be
-            # safe.
-            self.open_lock.acquire()
-
-            if tar_file_name not in self.uploads:
-                if len(self.uploads) == 5:
-                    # kick out the earliest one
-                    key = next(iter(self.uploads.keys()))
-                    if self.use_mosaic:
-                        self.uploads[key]["writer"].__exit__(None, None, None)
-                    else:
-                        self.uploads[key]["writer"].close()
-                    del self.uploads[key]
-                upload_file_name = f"{self.upload_to}/{tar_file_name}"
-                upload_command = f"pipe:gsutil cp - {upload_file_name}"
-                if self.use_mosaic:
-                    upload_file_name = upload_file_name.replace(".tar", ".mds")
-
-                logger.warning(f"opening new writer for {upload_file_name}")
-
-                self.uploads[tar_file_name] = {
-                    "writer": MDSWriter(out=upload_file_name, columns=self.columns, compression=self.compression) if self.use_mosaic else wds.TarWriter(upload_command),
-                    "lock": Lock(),
-                }
-
-            upload = self.uploads[tar_file_name]
-
-            self.open_lock.release()
-
             metadata = dict(metadata)
 
             sample = {
@@ -270,10 +241,43 @@ class Uploads:
                 for key in sample:
                     if isinstance(sample[key], torch.Tensor):
                         sample[key] = sample[key].numpy()
-            # Not locking around the write will corrupt the tar file
-            upload["lock"].acquire()
-            upload["writer"].write(sample)
-            upload["lock"].release()
+
+            # It is not strictly clear to me if it is necessary to lock this whole block or
+            # just part(s) of the kickout/create new writer. Just lock the whole function to be
+            # safe.
+            if not self.use_mosaic:
+                self.open_lock.acquire()
+                if tar_file_name not in self.uploads:
+                    if len(self.uploads) == 5:
+                        # kick out the earliest one
+                        key = next(iter(self.uploads.keys()))
+                        if self.use_mosaic:
+                            self.uploads[key]["writer"].__exit__(None, None, None)
+                        else:
+                            self.uploads[key]["writer"].close()
+                        del self.uploads[key]
+                    upload_file_name = f"{self.upload_to}/{tar_file_name}"
+                    upload_command = f"pipe:gsutil cp - {upload_file_name}"
+
+                    logger.warning(f"opening new writer for {upload_file_name}")
+
+                    self.uploads[tar_file_name] = {
+                        "lock": Lock(),
+                        "writer": wds.TarWriter(upload_command)
+                    }
+                upload = self.uploads[tar_file_name]
+
+                self.open_lock.release()
+                 # Not locking around the write will corrupt the tar file
+                upload["lock"].acquire()
+                upload["writer"].write(sample)
+                upload["lock"].release()
+            else:
+                # This nullifies most of the reason for having a threadpool but mosaic seems
+                # to only want one writer
+                self.open_lock.acquire()
+                self.mosaic_writer.write(sample)
+                self.open_lock.release()
 
 
 def distribute_shards(start_shard_all, end_shard_all, slurm_ntasks):

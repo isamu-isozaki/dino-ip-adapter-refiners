@@ -156,10 +156,10 @@ class Uploads:
         self.executor.shutdown(wait=True)
 
         # Close all unclosed file writes
-        for tar_file_name, tar_writer in self.uploads.items():
-            if self.use_mosaic:
-                tar_writer["writer"].__exit__(exc_type, exc_val, exc_tb)
-            else:
+        if self.use_mosaic:
+            self.mosaic_writer.__exit__(exc_type, exc_val, exc_tb)
+        else:
+            for tar_file_name, tar_writer in self.uploads.items():
                 tar_writer["writer"].close()
 
         return False
@@ -251,10 +251,7 @@ class Uploads:
                     if len(self.uploads) == 5:
                         # kick out the earliest one
                         key = next(iter(self.uploads.keys()))
-                        if self.use_mosaic:
-                            self.uploads[key]["writer"].__exit__(None, None, None)
-                        else:
-                            self.uploads[key]["writer"].close()
+                        self.uploads[key]["writer"].close()
                         del self.uploads[key]
                     upload_file_name = f"{self.upload_to}/{tar_file_name}"
                     upload_command = f"pipe:gsutil cp - {upload_file_name}"

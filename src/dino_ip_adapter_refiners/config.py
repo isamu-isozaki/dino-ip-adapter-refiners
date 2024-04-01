@@ -1,4 +1,4 @@
-from refiners.training_utils import BaseConfig, ModelConfig, WandbConfig, CallbackConfig
+from refiners.training_utils import BaseConfig, ModelConfig, WandbConfig, CallbackConfig, TrainingConfig
 
 class TestDiffusionConfig(BaseConfig):
     seed: int = 0
@@ -27,6 +27,11 @@ class IPAdapterConfig(ModelConfig):
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
 
+class IPTrainingConfig(TrainingConfig):
+    automatic_mixed_precision: bool = (
+        True  # Enables automatic mixed precision which allows float32 gradients while working with lower precision. This only has effect when dtype is not float32
+    )
+
 class SaveAdapterConfig(CallbackConfig):
     checkpoint_steps: int = 2000
     save_folder: str | None = None
@@ -35,8 +40,6 @@ class DatasetConfig(BaseConfig):
     """Configuration for the dataset."""
 
     horizontal_flip_probability: float = 0.5
-    random_crop_size: int | None = None
-    center_crop_size: int | None = 512
     image_drop_rate: float = 0.05
     text_drop_rate: float = 0.05
     text_and_image_drop_rate: float = 0.05
@@ -48,6 +51,7 @@ class DatasetConfig(BaseConfig):
     is_webdataset: bool = False
     only_image: bool = False
     dataset_length: int = 567597
+    dataset_workers: int = 4
 
 
 class TestIPDiffusionConfig(TestDiffusionConfig):
@@ -62,6 +66,7 @@ class Config(BaseConfig):
     """
 
     dataset: DatasetConfig
+    extra_training: IPTrainingConfig
     test_ldm: TestIPDiffusionConfig
     compute_grad_norms: CallbackConfig
     compute_param_norms: CallbackConfig

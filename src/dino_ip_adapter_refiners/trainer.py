@@ -16,25 +16,126 @@ from dino_ip_adapter_refiners.diffusion_utils import (
 from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
 from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
 from dino_ip_adapter_refiners.data import DatasetAdapter, BatchOnlyImage, Batch
+from torch.utils.data import DataLoader
+from typing import Any, TypeVar, Generic, Callable
+from torch import Tensor, device as Device, dtype as DType, float16, float32, nn
+from torch.cuda.amp import GradScaler, autocast
+from refiners.training_utils.trainer import ModelConfigT, ModuleT, ModelItem, backward
+from refiners.training_utils import BaseConfig
+from refiners.fluxion import layers as fl
+from functools import cached_property, wraps
+from refiners.fluxion.utils import no_grad
+from refiners.training_utils.common import (
+    scoped_seed,
+)
 
-class Trainer(
+BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
+
+def register_model():
+    def decorator(func: Callable[[Any, ModelConfigT], ModuleT]) -> ModuleT:
+        @wraps(func)
+        def wrapper(self: AbstractTrainer[Config, BatchT], config: ModelConfigT) -> fl.Module:
+            name = func.__name__
+            model = func(self, config)
+            model = model.to(self.device, dtype=self.dtype)
+            if config.requires_grad is not None:
+                model.requires_grad_(requires_grad=config.requires_grad)
+            learnable_parameters = [param for param in model.parameters() if param.requires_grad]
+            if self.config.extra_training.automatic_mixed_precision:
+                # For all parameters we train in automatic mixed precision we want them to be in float32.
+                for learnable_parameter in learnable_parameters:
+                    learnable_parameter.to(dtype=float32)
+            self.models[name] = ModelItem(
+                name=name, config=config, model=model, learnable_parameters=learnable_parameters
+            )
+            setattr(self, name, self.models[name].model)
+            return model
+
+        return wrapper  # type: ignore
+
+    return decorator
+
+# from https://github.com/finegrain-ai/refiners/pull/290
+class AMPTrainer(
+    Generic[BatchT],
     EvaluationMixin,
     IPAdapterMixin,
-    AbstractTrainer[Config, Batch],
+    AbstractTrainer[Config, BatchT],
 ):
-    def __init__(self, config: Config) -> None:
+    @cached_property
+    def scaler(self) -> GradScaler | None:
+        if self.dtype != float16 or not self.config.extra_training.automatic_mixed_precision:
+            return None
+        return GradScaler()
+    def backward_step(self, scaled_loss: Tensor) -> None:
+        if self.scaler is None:
+            backward(tensors=scaled_loss)
+            return
+        self.scaler.scale(scaled_loss).backward()  # type: ignore
+    def optimizer_step(self) -> None:
+        if self.scaler is not None:
+            self.scaler.unscale_(self.optimizer)
+        max_norm = self.config.training.gradient_clipping_max_norm or float("inf")
+        self.grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.learnable_parameters, max_norm=max_norm).item()
+        if self.scaler is None:
+            self.optimizer.step()
+            return
+        self.scaler.step(self.optimizer)  # type: ignore
+        self.scaler.update()
+    def backward(self) -> None:
+        """Backward pass on the loss."""
+        self._call_callbacks(event_name="on_backward_begin")
+        scaled_loss = self.loss / self.clock.num_step_per_iteration
+        self.backward_step(scaled_loss)
+        self._call_callbacks(event_name="on_backward_end")
+        if self.clock.is_optimizer_step:
+            self._call_callbacks(event_name="on_optimizer_step_begin")
+            self.optimizer_step()
+            self.optimizer.zero_grad()
+            self._call_callbacks(event_name="on_optimizer_step_end")
+        if self.clock.is_lr_scheduler_step:
+            self._call_callbacks(event_name="on_lr_scheduler_step_begin")
+            self.lr_scheduler.step()
+            self._call_callbacks(event_name="on_lr_scheduler_step_end")
+        if self.clock.is_evaluation_step:
+            self.evaluate()
+    def step(self, batch: BatchT) -> None:
+        """Perform a single training step."""
+        self._call_callbacks(event_name="on_compute_loss_begin")
+        with autocast(dtype=self.dtype, enabled=self.config.training.automatic_mixed_precision):
+            loss = self.compute_loss(batch=batch)
+        self.loss = loss
+        self._call_callbacks(event_name="on_compute_loss_end")
+        self.backward()
+
+    @no_grad()
+    @scoped_seed(seed=AbstractTrainer.get_evaluation_seed)
+    def evaluate(self) -> None:
+        """Evaluate the model."""
+        self.set_models_to_mode(mode="eval")
+        self._call_callbacks(event_name="on_evaluate_begin")
+        with autocast(dtype=self.dtype, enabled=self.config.training.automatic_mixed_precision):
+            self.compute_evaluation()
+        self._call_callbacks(event_name="on_evaluate_end")
+        self.set_models_to_mode(mode="train")
+
+class BaseTrainer(AMPTrainer[BatchT]):
+    def __init__(self, config: Config):
         super().__init__(config)
-        assert config.dataset.only_image
-        # TODO: Change this to Mixin once I figure out __init__ for multi inheritance
         self.dataset_adapter = DatasetAdapter(config.dataset)
-    def get_item(self, index: int) -> Batch:
-        item =  self.dataset_adapter.get_item(index)
-        assert isinstance(item, Batch)
-        return item
-    def collate_fn(self, batch: list[Batch]) -> Batch:
-        output = self.dataset_adapter.collate_fn(batch)
-        assert isinstance(output, Batch)
-        return output
+    def get_item(self, index: int) -> BatchT:
+        return self.dataset_adapter.get_item(index)
+    def collate_fn(self, batch: list[BatchT]) -> BatchT:
+        return self.dataset_adapter.collate_fn(batch)
+    @cached_property
+    def dataloader(self) -> DataLoader[Any]:
+        return DataLoader(
+            dataset=self.dataset, batch_size=self.config.training.batch_size, num_workers=self.config.dataset.dataset_workers, shuffle=True, collate_fn=self.collate_fn
+        )
+class Trainer(
+    BaseTrainer[Batch]
+):
+
     @cached_property
     def unet(self) -> SD1UNet:
         return SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
@@ -73,13 +174,10 @@ class Trainer(
         return rescaled_loss.mean()
 
 class TrainerOnlyImage(
-    EvaluationMixin,
-    IPAdapterMixin,
-    AbstractTrainer[Config, BatchOnlyImage],
+    BaseTrainer[BatchOnlyImage]
 ):
     def __init__(self, config: Config) -> None:
         super().__init__(config)
-        assert config.dataset.only_image
         # TODO: Change this to Mixin once I figure out __init__ for multi inheritance
         self.dataset_adapter = DatasetAdapter(config.dataset)
     def get_item(self, index: int) -> BatchOnlyImage:

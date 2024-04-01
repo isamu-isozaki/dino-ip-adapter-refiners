@@ -80,11 +80,11 @@ class Config(BaseConfig):
     save_adapter: SaveAdapterConfig
     wandb: WandbConfig
     unet: ModelConfig
-    lda: ModelConfig
-    text_encoder: ModelConfig
-    image_encoder: ModelConfig
+    # lda: ModelConfig
+    # text_encoder: ModelConfig
+    # image_encoder: ModelConfig
     # image proj has to be after image encoder or it fails
-    image_proj: ModelConfig
-    uncond_token: ModelConfig
+    # image_proj: ModelConfig
+    # uncond_token: ModelConfig
     # adapter needs to be initialized later for this to work
     ip_adapter: IPAdapterConfig

@@ -1,26 +1,6 @@
 from dino_ip_adapter_refiners.mixin.base import BaseMixin, BatchT
 from functools import cached_property
-from refiners.foundationals.latent_diffusion import SD1UNet
-from refiners.foundationals.latent_diffusion.solvers import DDPM
-import torch
-from torch.nn import functional as F
-from refiners.training_utils import Trainer as AbstractTrainer
-from dino_ip_adapter_refiners.config import Config
-from dino_ip_adapter_refiners.diffusion_utils import (
-    scale_loss,
-    sample_noise,
-    sample_timesteps,
-    add_noise_to_latents,
-    TimestepSampler,
-    LossScaler,
-)
-from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
-from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
-from dino_ip_adapter_refiners.data import DatasetAdapter, BatchOnlyImage, Batch
-from dino_ip_adapter_refiners.utils import register_model
-
-from torch.utils.data import DataLoader
-from typing import Any, TypeVar, Generic
+from typing import Generic
 from torch import Tensor, float16, nn
 from torch.cuda.amp import GradScaler, autocast
 from refiners.training_utils.trainer import backward

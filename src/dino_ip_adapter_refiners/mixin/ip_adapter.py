@@ -12,7 +12,7 @@ from dino_ip_adapter_refiners.mixin.base import BaseMixin, BatchT
 
 from torch.nn import Module, Linear, Embedding, LayerNorm
 from torch.nn.init import trunc_normal_
-from torch import dtype as DType, float32
+from torch import float32
 
 
 

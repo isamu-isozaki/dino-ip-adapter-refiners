@@ -12,8 +12,9 @@ from dino_ip_adapter_refiners.diffusion_utils import (
 from dino_ip_adapter_refiners.mixin import IPAdapterMixin, EvaluationMixin, AMPMixin, DataMixin
 from dino_ip_adapter_refiners.data import BatchOnlyImage, Batch
 from dino_ip_adapter_refiners.config import SaveAdapterConfig
-from refiners.training_utils import CallbackConfig
+from refiners.training_utils import CallbackConfig, ModelConfig
 
+from refiners.foundationals.latent_diffusion import SD1UNet
 
 from typing import TypeVar, Generic
 import os
@@ -84,6 +85,11 @@ class BaseTrainer(
     @register_callback()
     def save_adapter(self, config: SaveAdapterConfig) -> SaveAdapterCallback:
         return SaveAdapterCallback()
+    @register_model()
+    def unet(self, config: ModelConfig) -> SD1UNet:
+        unet = SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
+        unet.load_from_safetensors(self.config.extra_training.unet_checkpoint)
+        return unet
 class Trainer(
     BaseTrainer[Batch]
 ):

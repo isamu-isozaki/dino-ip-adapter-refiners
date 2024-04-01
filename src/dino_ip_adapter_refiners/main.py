@@ -10,8 +10,9 @@ if __name__ == "__main__":
     config = dotenv_values(".env")
 
     TRAINING_PATH = config.get("TRAINING_PATH")
+    assert isinstance(TRAINING_PATH, str)
     config = Config.load_from_toml(toml_path=config_path)
-    config.train_shards_path_or_url = TRAINING_PATH
+    config.dataset.train_shards_path_or_url = TRAINING_PATH
     trainer = TrainerOnlyImage(config)
 
     trainer.train()

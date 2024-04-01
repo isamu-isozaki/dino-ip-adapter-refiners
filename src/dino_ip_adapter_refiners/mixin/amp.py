@@ -30,7 +30,8 @@ from refiners.training_utils.common import (
 )
 # from https://github.com/finegrain-ai/refiners/pull/290
 class AMPMixin(
-    BaseMixin
+    Generic[BatchT],
+    BaseMixin[BatchT]
 ):
     @cached_property
     def scaler(self) -> GradScaler | None:

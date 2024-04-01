@@ -28,7 +28,10 @@ from refiners.fluxion.utils import no_grad
 from refiners.training_utils.common import (
     scoped_seed,
 )
-class DataMixin(BaseMixin):
+class DataMixin(
+    Generic[BatchT],
+    BaseMixin[BatchT]
+):
     def __init__(self, config: Config):
         self.dataset_adapter = DatasetAdapter(config.dataset)
         super().__init__(config)

@@ -3,28 +3,30 @@ mode = "online"                         # "online", "offline", "disabled"
 entity = "isamu"
 project = "finetune-ldm-ip-adapter"
 
+[extra_training]
+automatic_mixed_precision = true
+unet_checkpoint = "checkpoints/unet.safetensors"
+text_encoder_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
+lda_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
+image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 
 [unet]
-checkpoint = "checkpoints/unet.safetensors"
 requires_grad = false
 
 [text_encoder]
-checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
 requires_grad = false
 
 [lda]
-checkpoint = "checkpoints/lda.safetensors"
 requires_grad = false
 
 [image_encoder]
-checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 requires_grad = false
 
 [uncond_token]
 
 [image_proj]
 
-[adapter]
+[ip_adapter]
 image_encoder_type = "dinov2_vitl14_reg4"
 resolution = 518
 scale = 1.0
@@ -38,7 +40,7 @@ use_rescaler = true
 weighted_sum = true
 
 [training]
-duration = {"number" = 1000000, "unit" = "step"}
+duration = {"number" = 100000000, "unit" = "step"}
 seed = 9752
 batch_size = 46
 gradient_accumulation = {"number" = 16, "unit" = "step"}
@@ -46,9 +48,7 @@ evaluation_interval = {"number" = 500, "unit" = "step"}
 evaluation_seed = 9752
 dtype = "bfloat16"
 device="cuda"
-
-[extra_training]
-automatic_mixed_precision = true
+gradient_clipping_max_norm=2.0
 
 [optimizer]
 optimizer = "AdamW8bit"  # "SGD", "Adam", "AdamW", "AdamW8bit", "Lion8bit"
@@ -58,7 +58,7 @@ betas = [0.9, 0.999]
 eps = 1e-8
 weight_decay = 1e-2
 
-[scheduler]
+[lr_scheduler]
 scheduler_type = "ConstantLR"
 update_interval = "1:step"
 # max_steps = 2000

@@ -146,7 +146,7 @@ if __name__ == "__main__":
     import torch
 
     unet = SD1UNet(4)
-    adapter = DinoIPAdapter(unet).inject()
+    adapter = DinoOnlyIPAdapter(unet).inject()
 
     timestep = torch.randn(1, 1)
     unet.set_timestep(timestep)

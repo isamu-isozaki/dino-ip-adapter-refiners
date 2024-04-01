@@ -21,6 +21,7 @@ import os
 from refiners.training_utils.callback import Callback
 from refiners.fluxion.utils import save_to_safetensors
 from refiners.training_utils.trainer import register_callback
+from dino_ip_adapter_refiners.utils import register_model
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
 class ComputeGradNormCallback(Callback["BaseTrainer"]):

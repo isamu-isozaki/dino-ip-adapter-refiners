@@ -8,6 +8,7 @@ class TestDiffusionConfig(BaseConfig):
     num_images_per_prompt: int = 1
     condition_scale: float = 7.5
 
+
 class IPAdapterConfig(ModelConfig):
     """Configuration for the IP adapter."""
 
@@ -31,6 +32,11 @@ class IPTrainingConfig(TrainingConfig):
     automatic_mixed_precision: bool = (
         True  # Enables automatic mixed precision which allows float32 gradients while working with lower precision. This only has effect when dtype is not float32
     )
+    unet_checkpoint: str = "checkpoints/unet.safetensors"
+    text_encoder_checkpoint: str = "checkpoints/CLIPTextEncoderL.safetensors"
+    lda_checkpoint: str = "checkpoints/CLIPTextEncoderL.safetensors"
+    image_encoder_checkpoint: str = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
+    ip_adapter_checkpoint: str | None = None
 
 class SaveAdapterConfig(CallbackConfig):
     checkpoint_steps: int = 2000

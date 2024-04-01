@@ -5,7 +5,7 @@ from refiners.foundationals.latent_diffusion.cross_attention import CrossAttenti
 from refiners.foundationals.latent_diffusion.image_prompt import PerceiverResampler
 from refiners.fluxion.adapters import Adapter
 from refiners.foundationals.latent_diffusion import SD1UNet
-from dino_ip_adapter_refiners.utils import regiser_model
+from dino_ip_adapter_refiners.utils import register_model
 from refiners.fluxion import layers as fl
 
 from dino_ip_adapter_refiners.config import IPAdapterConfig

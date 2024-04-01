@@ -1,6 +1,7 @@
 from refiners.training_utils import BaseConfig, ModelConfig, WandbConfig, CallbackConfig, TrainingConfig
+from pydantic import BaseModel
 
-class TestDiffusionConfig(BaseConfig):
+class TestDiffusionConfig(BaseModel):
     seed: int = 0
     num_inference_steps: int = 30
     use_short_prompts: bool = False
@@ -42,7 +43,7 @@ class SaveAdapterConfig(CallbackConfig):
     checkpoint_steps: int = 2000
     save_folder: str | None = None
 
-class DatasetConfig(BaseConfig):
+class DatasetConfig(BaseModel):
     """Configuration for the dataset."""
 
     horizontal_flip_probability: float = 0.5

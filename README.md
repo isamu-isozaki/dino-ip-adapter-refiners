@@ -60,7 +60,14 @@ If adding text encoder embeddings and working with mosaic you can encode with
  python precompute_data.py --dataset="photo_concept" --start_shard=0 --end_shard=56 --batch_size=32 --encode_prompt --use_mosaic --compression=zstd
  ```
 
+If using mosaic encoding, .mds is added to PHOTO_CONCEPT_PREENCODED
 ### Train Model
+
+to .env add
+```
+TRAINING_PATH="/save/path"
+```
+but add .mds at the end if using mosaic.
 
 To train the model, you can use the following command:
 

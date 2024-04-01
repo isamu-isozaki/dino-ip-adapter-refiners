@@ -1,13 +1,5 @@
-from refiners.training_utils import (
-    LRSchedulerConfig,
-    LRSchedulerType,
-    OptimizerConfig,
-    Optimizers,
-    TrainingConfig,
-    WandbConfig,
-)
-from refiners.training_utils.common import TimeUnit, TimeValue
-from dino_ip_adapter_refiners.config import Config, IPAdapterConfig
+
+from dino_ip_adapter_refiners.config import Config
 from dino_ip_adapter_refiners.trainer import TrainerOnlyImage
 import sys
 from dotenv import dotenv_values

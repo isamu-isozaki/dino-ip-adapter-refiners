@@ -36,6 +36,7 @@ from refiners.foundationals.dinov2 import (
 )
 from refiners.fluxion.utils import normalize
 from refiners.fluxion import layers as fl
+from refiners.foundationals.clip.text_encoder import CLIPTextEncoderL
 
 from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
     SD1Autoencoder,
@@ -53,6 +54,7 @@ import webdataset as wds
 from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode
 from dotenv import dotenv_values
+from streaming import MDSWriter
 
 
 torch.set_float32_matmul_precision("high")
@@ -60,8 +62,11 @@ torch.no_grad().__enter__()
 
 DINO_IMAGE_ENCODER = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 LDA = "checkpoints/lda.safetensors"
+CLIP_TEXT_ENCODER = "checkpoints/CLIPTextEncoderL.safetensors"
+
 DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
 LDA_EXT = "sd15_lda.pth"
+CLIP_TEXT_EXT = "CLIPL.pth"
 
 config = dotenv_values(".env")
 
@@ -116,11 +121,25 @@ class Uploads:
     because writes are not thread safe and can corrupt the archive.
     """
 
-    def __init__(self, skip_upload, upload_to, num_writing_threads):
+    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="", encode_prompt=False):
         self.open_lock = Lock()
         self.uploads = OrderedDict()
         self.skip_upload = skip_upload
         self.upload_to = upload_to
+        self.use_mosaic = use_mosaic
+        if len(compression) == 0:
+            self.compression = None
+        self.compression = compression
+        self.columns = {
+            "__key__": "str",
+            DINO_IMAGE_ENCODER_EXT.lower(): "ndarray",
+            LDA_EXT.lower(): "ndarray",
+            "json": "json"
+        }
+        if encode_prompt:
+            self.columns[CLIP_TEXT_EXT.lower()] = "ndarray"
+        if use_mosaic:
+            self.mosaic_writer = MDSWriter(out=self.upload_to+".mds", columns=self.columns, compression=self.compression)
         self.futures = []
         self.num_writing_threads = num_writing_threads
         self.executor = concurrent.futures.ThreadPoolExecutor(
@@ -137,8 +156,11 @@ class Uploads:
         self.executor.shutdown(wait=True)
 
         # Close all unclosed file writes
-        for tar_file_name, tar_writer in self.uploads.items():
-            tar_writer["writer"].close()
+        if self.use_mosaic:
+            self.mosaic_writer.__exit__(exc_type, exc_val, exc_tb)
+        else:
+            for tar_file_name, tar_writer in self.uploads.items():
+                tar_writer["writer"].close()
 
         return False
 
@@ -149,6 +171,7 @@ class Uploads:
         encoded_image_dino,
         encoded_image_lda,
         metadata,
+        encoder_hidden_states=None
     ):
         future = self.executor.submit(
             self._upload_thread_entrypoint,
@@ -157,6 +180,7 @@ class Uploads:
             encoded_image_dino,
             encoded_image_lda,
             metadata,
+            encoder_hidden_states=encoder_hidden_states
         )
 
         self.futures.append(future)
@@ -172,69 +196,85 @@ class Uploads:
         __url__,
         encoded_image_dinos,
         encoded_image_ldas,
-        metadata,
+        metadatas,
+        encoder_hidden_states=None
     ):
         encoded_image_dinos = torch.unbind(encoded_image_dinos)
         encoded_image_ldas = torch.unbind(encoded_image_ldas)
+        if encoder_hidden_states is not None:
+            encoder_hidden_states = torch.unbind(encoder_hidden_states)
 
-        for (
+        for i, (
             __key__,
             __url__,
             encoded_image_dino,
             encoded_image_lda,
             metadata,
-        ) in zip(
+        ) in enumerate(zip(
             __key__,
             __url__,
             encoded_image_dinos,
             encoded_image_ldas,
-            metadata,
-        ):
+            metadatas,
+        )):
             encoded_image_dino = encoded_image_dino.clone().to("cpu")
             encoded_image_lda = encoded_image_lda.clone().to("cpu")
+            encoder_hidden_state = None
+            if encoder_hidden_states is not None:
+                encoder_hidden_state = encoder_hidden_states[i].clone().to("cpu")
 
             if self.skip_upload:
                 continue
 
             tar_file_name = get_tar_file_name(__url__)
-
-            # It is not strictly clear to me if it is necessary to lock this whole block or
-            # just part(s) of the kickout/create new writer. Just lock the whole function to be
-            # safe.
-            self.open_lock.acquire()
-
-            if tar_file_name not in self.uploads:
-                if len(self.uploads) == 5:
-                    # kick out the earliest one
-                    key = next(iter(self.uploads.keys()))
-                    self.uploads[key]["writer"].close()
-                    del self.uploads[key]
-
-                upload_command = f"pipe:gsutil cp - {self.upload_to}/{tar_file_name}"
-                logger.warning(f"opening new writer for {upload_command}")
-
-                self.uploads[tar_file_name] = {
-                    "writer": wds.TarWriter(upload_command),
-                    "lock": Lock(),
-                }
-
-            upload = self.uploads[tar_file_name]
-
-            self.open_lock.release()
-
             metadata = dict(metadata)
 
             sample = {
                 "__key__": __key__,
-                DINO_IMAGE_ENCODER_EXT: encoded_image_dino,
-                LDA_EXT: encoded_image_lda,
+                DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_dino,
+                LDA_EXT.lower(): encoded_image_lda,
                 "json": metadata,
             }
+            if encoder_hidden_state is not None:
+                sample[CLIP_TEXT_EXT.lower()] = encoder_hidden_state
+            if self.use_mosaic:
+                for key in sample:
+                    if isinstance(sample[key], torch.Tensor):
+                        sample[key] = sample[key].numpy()
 
-            # Not locking around the write will corrupt the tar file
-            upload["lock"].acquire()
-            upload["writer"].write(sample)
-            upload["lock"].release()
+            # It is not strictly clear to me if it is necessary to lock this whole block or
+            # just part(s) of the kickout/create new writer. Just lock the whole function to be
+            # safe.
+            if not self.use_mosaic:
+                self.open_lock.acquire()
+                if tar_file_name not in self.uploads:
+                    if len(self.uploads) == 5:
+                        # kick out the earliest one
+                        key = next(iter(self.uploads.keys()))
+                        self.uploads[key]["writer"].close()
+                        del self.uploads[key]
+                    upload_file_name = f"{self.upload_to}/{tar_file_name}"
+                    upload_command = f"pipe:gsutil cp - {upload_file_name}"
+
+                    logger.warning(f"opening new writer for {upload_file_name}")
+
+                    self.uploads[tar_file_name] = {
+                        "lock": Lock(),
+                        "writer": wds.TarWriter(upload_command)
+                    }
+                upload = self.uploads[tar_file_name]
+
+                self.open_lock.release()
+                 # Not locking around the write will corrupt the tar file
+                upload["lock"].acquire()
+                upload["writer"].write(sample)
+                upload["lock"].release()
+            else:
+                # This nullifies most of the reason for having a threadpool but mosaic seems
+                # to only want one writer
+                self.open_lock.acquire()
+                self.mosaic_writer.write(sample)
+                self.open_lock.release()
 
 
 def distribute_shards(start_shard_all, end_shard_all, slurm_ntasks):
@@ -337,6 +377,19 @@ def main():
         required=False,
         default=40,
     )
+    parser.add_argument(
+        "--encode_prompt",
+        action="store_true"
+    )
+    parser.add_argument(
+        "--use_mosaic",
+        action="store_true"
+    )
+    parser.add_argument(
+        "--compression",
+        type=str,
+        default=""
+    )
 
     args = parser.parse_args()
 
@@ -395,6 +448,11 @@ def main():
                 f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}"
             )
         logger.warning("************")
+    if args.encode_prompt:
+        text_encoder = CLIPTextEncoderL().to("cuda")
+        text_encoder.requires_grad_(False)
+        text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
+
     lda = SD1Autoencoder(
         device="cuda",
     )
@@ -443,12 +501,14 @@ def main():
         num_workers=0,
     )
 
-    with Uploads(args.skip_upload, upload_to, args.num_writing_threads) as uploads:
+    with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
         for __key__, __url__, image, prompt, metadata in src:
             logger.warning(
                 f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
             )
-
+            encoder_hidden_states = None
+            if args.encode_prompt:
+                encoder_hidden_states = text_encoder(prompt)
             all_images = []
             lda_images = []
 
@@ -485,7 +545,7 @@ def main():
                     antialias=True,
                 )
 
-                lda_image_ = TF.center_crop(image_, args.lda_resolution)
+                lda_image_ = TF.center_crop(lda_image_, args.lda_resolution)
                 lda_images.append(2 * lda_image_ - 1)
                 image_ = TF.resize(
                     image_,
@@ -513,6 +573,7 @@ def main():
                 encoded_image_dino,
                 encoded_image_lda,
                 metadata,
+                encoder_hidden_states=encoder_hidden_states
             )
 
 

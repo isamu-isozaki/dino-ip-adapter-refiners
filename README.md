@@ -49,10 +49,16 @@ Google Cloud Storage for this purpose.
 Run the following command to precompute the features for the dataset:
 
 ```bash
-python precompute_new.py --dataset photo_concept --start_shard 0 --end_shard 57 --batch_size 32
+python precompute_data.py --dataset photo_concept --start_shard 0 --end_shard 56 --batch_size 32
 ```
 
 Batch size can be adjusted to fit the memory of the machine, 32 works for 40GB of memory.
+
+If adding text encoder embeddings and working with mosaic you can encode with
+
+```bash
+ python precompute_data.py --dataset="photo_concept" --start_shard=0 --end_shard=56 --batch_size=32 --encode_prompt --use_mosaic --compression=zstd
+ ```
 
 ### Train Model
 
@@ -60,5 +66,9 @@ To train the model, you can use the following command:
 
 ```bash
 .venv/bin/python src/dino_ip_adapter_refiners
+```
 
-
+If using Mosaic, you first need to download index.json from PHOTO_CONCEPT_PREENCODED to the cache file location you specified. It will be along the lines of
+```bash
+gsutil cp GCP_SAVE_PATH/index.json CACHE_FOLDER_LOCATION
+```

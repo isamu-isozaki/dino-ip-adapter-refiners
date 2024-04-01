@@ -1,21 +1,54 @@
-from typing import Any
+from typing import Any, Generic
 from torch import nn
 import torch
 from refiners.foundationals.latent_diffusion.cross_attention import CrossAttentionBlock
 from refiners.foundationals.latent_diffusion.image_prompt import PerceiverResampler
 from refiners.fluxion.adapters import Adapter
 from refiners.foundationals.latent_diffusion import SD1UNet
-from refiners.training_utils import register_model
-
+from dino_ip_adapter_refiners.utils import register_model
 from refiners.fluxion import layers as fl
-
 from dino_ip_adapter_refiners.config import IPAdapterConfig
+from dino_ip_adapter_refiners.mixin.base import BaseMixin, BatchT
 
+from torch.nn import Module, Linear, Embedding, LayerNorm
+from torch.nn.init import trunc_normal_
+from torch import float32
+
+
+
+# Adapted from https://github.com/huggingface/open-muse
+def _init_learnable_weights(module: Module, initializer_range: float):
+    """
+    Initialize the weights according to the original implementation.
+    https://github.com/google-research/maskgit/blob/main/maskgit/nets/maskgit_transformer.py#L37
+    """
+
+    # TODO: make this configurable
+    if isinstance(module, Linear):
+        if module.weight.requires_grad:
+            if initializer_range == 0:
+                module.weight.data.zero_()
+            else:
+                trunc_normal_(module.weight, std=initializer_range)
+        if module.bias is not None and module.bias.requires_grad:
+            module.bias.data.zero_()
+    elif isinstance(module, Embedding):
+        if module.weight.requires_grad:
+            if initializer_range == 0:
+                module.weight.data.zero_()
+            else:
+                trunc_normal_(module.weight, std=initializer_range)
+    elif isinstance(module, (LayerNorm)):
+        if hasattr(module, "weight") and module.weight.requires_grad:
+            module.weight.data.fill_(1.0)
+        if hasattr(module, "bias") and module.bias is not None and module.bias.requires_grad:
+            module.bias.data.zero_()
 
 class CrossAttentionAdapter(fl.Chain, Adapter[CrossAttentionBlock]):
     def __init__(
         self,
         target: CrossAttentionBlock,
+        use_timestep_embedding: bool = False
     ) -> None:
         with self.setup_adapter(target):
             cross_attention = target.layer(1, fl.Residual)
@@ -71,9 +104,8 @@ class CrossAttentionAdapter(fl.Chain, Adapter[CrossAttentionBlock]):
         self.key_matrix.weight.requires_grad_(enable)
         self.value_matrix.weight.requires_grad_(enable)
 
-
-class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet) -> None:
+class DinoOnlyIPAdapter(Adapter[SD1UNet], fl.Chain):
+    def __init__(self, target: SD1UNet, use_timestep_embedding: bool = False, use_uncond_token: bool = True) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
 
@@ -90,14 +122,16 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                 dtype=target.dtype,
             )
         ]
-        self._unconditional_image_embedding = [
-            nn.Parameter(
-                torch.randn(1, 128, 1024, device=target.device, dtype=target.dtype)
-            )
-        ]
+        self.use_uncond_token = use_uncond_token
+        if use_uncond_token:
+            self._unconditional_image_embedding = [
+                nn.Parameter(
+                    torch.randn(1, 128, 1024, device=target.device, dtype=target.dtype)
+                )
+            ]
 
         self.sub_adapters = [
-            CrossAttentionAdapter(cross_attn)
+            CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding)
             for cross_attn in target.layers(CrossAttentionBlock)
         ]
 
@@ -115,30 +149,42 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
 
         return self
 
+    def initialize_weights(self, initializer_range: float = 0.02):
+        self.image_proj.to(dtype=float32)
+        for module in self.image_proj.modules():
+            _init_learnable_weights(module, initializer_range)
+        for sub_adapter in self.sub_adapters:
+            sub_adapter.to(dtype=float32)
+            for module in sub_adapter.modules():
+                _init_learnable_weights(module, initializer_range)
     def enable_gradients(self, enable: bool) -> None:
         self.image_proj.requires_grad_(enable)
         for sub_adapter in self.sub_adapters:
             sub_adapter.enable_gradients(enable)
+        self.unconditional_image_embedding.requires_grad_(enable)
 
     def get_image_embedding(
-        self, dino_embedding: torch.Tensor, /, drop_rate: float = 0.1
+        self, dino_embedding: torch.Tensor, /, drop_rate: float = 0.0
     ) -> torch.Tensor:
-        if torch.rand(1) > drop_rate:
+        if torch.rand(1) > drop_rate or not self.use_uncond_token:
             return self.image_proj(dino_embedding)
-
         return self.unconditional_image_embedding
 
     def set_image_context(self, image_embedding: torch.Tensor, /) -> None:
         self.set_context("ip_adapter", {"image_embedding": image_embedding})
 
 
-class IPAdapterMixin:
+class IPAdapterMixin(
+    Generic[BatchT],
+    BaseMixin[BatchT]
+):
     @register_model()
-    def ip_adapter(self: Any, config: IPAdapterConfig) -> DinoIPAdapter:
-        ip_adapter = DinoIPAdapter(
+    def ip_adapter(self: Any, config: IPAdapterConfig) -> DinoOnlyIPAdapter:
+        ip_adapter = DinoOnlyIPAdapter(
             target=self.unet,
         ).inject()
         ip_adapter.enable_gradients(True)
+        ip_adapter.initialize_weights(config.initializer_range)
         return ip_adapter
 
 
@@ -146,7 +192,7 @@ if __name__ == "__main__":
     import torch
 
     unet = SD1UNet(4)
-    adapter = DinoIPAdapter(unet).inject()
+    adapter = DinoOnlyIPAdapter(unet).inject()
 
     timestep = torch.randn(1, 1)
     unet.set_timestep(timestep)

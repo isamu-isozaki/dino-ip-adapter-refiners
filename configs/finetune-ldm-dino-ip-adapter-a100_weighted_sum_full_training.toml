@@ -13,19 +13,6 @@ image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 [unet]
 requires_grad = false
 
-[text_encoder]
-requires_grad = false
-
-[lda]
-requires_grad = false
-
-[image_encoder]
-requires_grad = false
-
-[uncond_token]
-
-[image_proj]
-
 [ip_adapter]
 image_encoder_type = "dinov2_vitl14_reg4"
 resolution = 518

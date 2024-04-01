@@ -1,10 +1,6 @@
-from functools import cached_property
-from refiners.foundationals.latent_diffusion import SD1UNet
-from refiners.foundationals.latent_diffusion.solvers import DDPM
 import torch
+from torch import Tensor
 from torch.nn import functional as F
-from refiners.training_utils import Trainer as AbstractTrainer
-from dino_ip_adapter_refiners.config import Config
 from dino_ip_adapter_refiners.diffusion_utils import (
     scale_loss,
     sample_noise,
@@ -13,115 +9,84 @@ from dino_ip_adapter_refiners.diffusion_utils import (
     TimestepSampler,
     LossScaler,
 )
-from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
-from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
-from dino_ip_adapter_refiners.data import DatasetAdapter, BatchOnlyImage, Batch
-from dino_ip_adapter_refiners.utils import register_model
+from dino_ip_adapter_refiners.mixin import IPAdapterMixin, EvaluationMixin, AMPMixin, DataMixin
+from dino_ip_adapter_refiners.data import BatchOnlyImage, Batch
+from dino_ip_adapter_refiners.config import SaveAdapterConfig
+from refiners.training_utils import CallbackConfig
 
-from torch.utils.data import DataLoader
-from typing import Any, TypeVar, Generic
-from torch import Tensor, float16, nn
-from torch.cuda.amp import GradScaler, autocast
-from refiners.training_utils.trainer import backward
-from refiners.fluxion.utils import no_grad
-from refiners.training_utils.common import (
-    scoped_seed,
-)
+
+from typing import TypeVar, Generic
+import os
+from refiners.training_utils.callback import Callback
+from refiners.fluxion.utils import save_to_safetensors
+from refiners.training_utils.trainer import register_callback
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
+class ComputeGradNormCallback(Callback["BaseTrainer"]):
+    """Callback to compute gradient norm"""
 
-# from https://github.com/finegrain-ai/refiners/pull/290
-class AMPTrainer(
+    def on_backward_end(self, trainer: "BaseTrainer") -> None:
+        if trainer.clock.is_evaluation_step:
+            for name, param in trainer.ip_adapter.named_parameters():
+                if param.grad is not None:
+                    grads = param.grad.detach().data
+                    grad_norm = (grads.norm(p=2) / grads.numel()).item()
+                    trainer.wandb_log(data={"grad_norm/" + name: grad_norm})
+        return super().on_backward_end(trainer)
+
+
+class ComputeParamNormCallback(Callback["BaseTrainer"]):
+    """Callback to compute gradient norm"""
+
+    def on_backward_end(self, trainer: "BaseTrainer") -> None:
+        if trainer.clock.is_evaluation_step:
+            for name, param in trainer.ip_adapter.named_parameters():
+                if param.grad is not None:
+                    data = param.data.detach()
+                    data_norm = (data.norm(p=2) / data.numel()).item()
+                    trainer.wandb_log(data={"param_norm/" + name: data_norm})
+        return super().on_backward_end(trainer)
+
+
+class SaveAdapterCallback(Callback["BaseTrainer"]):
+    """Callback to save the adapter when a checkpoint is saved."""
+    def __init__(self) -> None:
+        super().__init__()
+
+    def on_backward_end(self, trainer: "BaseTrainer") -> None:
+        if trainer.clock.iteration % trainer.config.save_adapter.checkpoint_steps == 0:
+            os.makedirs(trainer.config.save_adapter.save_folder, exist_ok=True)
+            cross_attention_adapters = trainer.ip_adapter.sub_adapters
+            image_proj = trainer.ip_adapter.image_proj
+
+            tensors: dict[str, Tensor] = {}
+            tensors |= {f"image_proj.{key}": value for key, value in image_proj.state_dict().items()}
+            for i, cross_attention_adapter in enumerate(cross_attention_adapters):
+                tensors |= {f"ip_adapter.{i:03d}.{key}": value for key, value in cross_attention_adapter.state_dict().items()}
+            save_to_safetensors(
+                path= f"{trainer.config.save_adapter.save_folder}/step{trainer.clock.iteration}.safetensors",
+                tensors=tensors,
+            )
+
+class BaseTrainer(
     Generic[BatchT],
+    IPAdapterMixin[BatchT],
     EvaluationMixin,
-    IPAdapterMixin,
-    AbstractTrainer[Config, BatchT],
+    AMPMixin[BatchT],
+    DataMixin[BatchT]
 ):
-    @cached_property
-    def scaler(self) -> GradScaler | None:
-        if self.dtype != float16 or not self.config.extra_training.automatic_mixed_precision:
-            return None
-        return GradScaler()
-    def backward_step(self, scaled_loss: Tensor) -> None:
-        if self.scaler is None:
-            backward(tensors=scaled_loss)
-            return
-        self.scaler.scale(scaled_loss).backward()  # type: ignore
-    def optimizer_step(self) -> None:
-        if self.scaler is not None:
-            self.scaler.unscale_(self.optimizer)
-        max_norm = self.config.training.gradient_clipping_max_norm or float("inf")
-        self.grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.learnable_parameters, max_norm=max_norm).item()
-        if self.scaler is None:
-            self.optimizer.step()
-            return
-        self.scaler.step(self.optimizer)  # type: ignore
-        self.scaler.update()
-    def backward(self) -> None:
-        """Backward pass on the loss."""
-        self._call_callbacks(event_name="on_backward_begin")
-        scaled_loss = self.loss / self.clock.num_step_per_iteration
-        self.backward_step(scaled_loss)
-        self._call_callbacks(event_name="on_backward_end")
-        if self.clock.is_optimizer_step:
-            self._call_callbacks(event_name="on_optimizer_step_begin")
-            self.optimizer_step()
-            self.optimizer.zero_grad()
-            self._call_callbacks(event_name="on_optimizer_step_end")
-        if self.clock.is_lr_scheduler_step:
-            self._call_callbacks(event_name="on_lr_scheduler_step_begin")
-            self.lr_scheduler.step()
-            self._call_callbacks(event_name="on_lr_scheduler_step_end")
-        if self.clock.is_evaluation_step:
-            self.evaluate()
-    def step(self, batch: BatchT) -> None:
-        """Perform a single training step."""
-        self._call_callbacks(event_name="on_compute_loss_begin")
-        with autocast(dtype=self.dtype, enabled=self.config.extra_training.automatic_mixed_precision):
-            loss = self.compute_loss(batch=batch)
-        self.loss = loss
-        self._call_callbacks(event_name="on_compute_loss_end")
-        self.backward()
-
-    @no_grad()
-    @scoped_seed(seed=AbstractTrainer.get_evaluation_seed)
-    def evaluate(self) -> None:
-        """Evaluate the model."""
-        self.set_models_to_mode(mode="eval")
-        self._call_callbacks(event_name="on_evaluate_begin")
-        with autocast(dtype=self.dtype, enabled=self.config.extra_training.automatic_mixed_precision):
-            self.compute_evaluation()
-        self._call_callbacks(event_name="on_evaluate_end")
-        self.set_models_to_mode(mode="train")
-
-class BaseTrainer(AMPTrainer[BatchT]):
-    def __init__(self, config: Config):
-        self.dataset_adapter = DatasetAdapter(config.dataset)
-        super().__init__(config)
-    def get_item(self, index: int) -> BatchT:
-        return self.dataset_adapter.get_item(index)
-    def collate_fn(self, batch: list[BatchT]) -> BatchT:
-        return self.dataset_adapter.collate_fn(batch)
-    @cached_property
-    def dataloader(self) -> DataLoader[Any]:
-        return DataLoader(
-            dataset=self.dataset, batch_size=self.config.training.batch_size, num_workers=self.config.dataset.dataset_workers, shuffle=True, collate_fn=self.collate_fn
-        )
-    @property
-    def dataset_length(self) -> int:
-        return self.dataset_adapter.dataset_length
+    @register_callback()
+    def compute_grad_norms(self, config: CallbackConfig) -> ComputeGradNormCallback:
+        return ComputeGradNormCallback()
+    @register_callback()
+    def compute_param_norms(self, config: CallbackConfig) -> ComputeParamNormCallback:
+        return ComputeParamNormCallback()
+    @register_callback()
+    def save_adapter(self, config: SaveAdapterConfig) -> SaveAdapterCallback:
+        return SaveAdapterCallback()
 class Trainer(
     BaseTrainer[Batch]
 ):
-
-    @cached_property
-    def unet(self) -> SD1UNet:
-        return SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
-
-    @property
-    def solver(self) -> DDPM:
-        return DDPM(1000, device=self.device)
-
     def compute_loss(self, batch: Batch) -> torch.Tensor:
         batch = batch.to(device=self.device, dtype=self.dtype)
 
@@ -154,26 +119,6 @@ class Trainer(
 class TrainerOnlyImage(
     BaseTrainer[BatchOnlyImage]
 ):
-    def __init__(self, config: Config) -> None:
-        super().__init__(config)
-        # TODO: Change this to Mixin once I figure out __init__ for multi inheritance
-        self.dataset_adapter = DatasetAdapter(config.dataset)
-    def get_item(self, index: int) -> BatchOnlyImage:
-        item =  self.dataset_adapter.get_item(index)
-        assert isinstance(item, BatchOnlyImage)
-        return item
-    def collate_fn(self, batch: list[BatchOnlyImage]) -> BatchOnlyImage:
-        output = self.dataset_adapter.collate_fn(batch)
-        assert isinstance(output, BatchOnlyImage)
-        return output
-    @cached_property
-    def unet(self) -> SD1UNet:
-        return SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
-
-    @property
-    def solver(self) -> DDPM:
-        return DDPM(1000, device=self.device)
-
     def compute_loss(self, batch: BatchOnlyImage) -> torch.Tensor:
         batch = batch.to(device=self.device, dtype=self.dtype)
 

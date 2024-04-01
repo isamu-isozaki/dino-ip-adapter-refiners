@@ -12,6 +12,7 @@ class MosaicAdapter(BaseDataAdapter):
         self.shuffle = shuffle
         self.cache_limit = cache_limit
         self.only_image = only_image
+        self.dataset_length = len(self.dataset)
     @cached_property
     def dataset(self) -> StreamingDataset:
         return StreamingDataset(remote=self.train_shards_path_or_url, local=self.cache_dir, shuffle=self.shuffle, cache_limit=self.cache_limit)

@@ -105,6 +105,9 @@ class BaseTrainer(AMPTrainer[BatchT]):
         return DataLoader(
             dataset=self.dataset, batch_size=self.config.training.batch_size, num_workers=self.config.dataset.dataset_workers, shuffle=True, collate_fn=self.collate_fn
         )
+    @property
+    def dataset_length(self) -> int:
+        return self.dataset_adapter.dataset_length
 class Trainer(
     BaseTrainer[Batch]
 ):

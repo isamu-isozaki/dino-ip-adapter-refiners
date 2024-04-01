@@ -11,6 +11,7 @@ class DatasetAdapter:
             self.dataset = WebdatasetAdapter(config.train_shards_path_or_url, config.dataset_length, only_image=config.only_image)
         else:
             raise Exception("is_mosaic or is_webdataset must be true for the dataset")
+        self.dataset_length = self.dataset.dataset_length
     def get_item(self, index: int) -> BatchOnlyImage | Batch:
         return self.dataset.get_item(index)
     def collate_fn(self, batch: list[BatchOnlyImage] | list[Batch]) -> BatchOnlyImage | Batch:

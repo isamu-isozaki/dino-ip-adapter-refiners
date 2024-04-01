@@ -78,5 +78,6 @@ class Config(BaseConfig):
     image_encoder: ModelConfig
     # image proj has to be after image encoder or it fails
     image_proj: ModelConfig
+    uncond_token: ModelConfig
     # adapter needs to be initialized later for this to work
     ip_adapter: IPAdapterConfig

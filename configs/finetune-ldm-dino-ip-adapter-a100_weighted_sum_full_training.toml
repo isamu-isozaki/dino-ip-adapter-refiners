@@ -3,9 +3,6 @@ mode = "online"                         # "online", "offline", "disabled"
 entity = "isamu"
 project = "finetune-ldm-ip-adapter"
 
-[ldm]
-offset_noise = 0
-# snr_gamma = 5
 
 [unet]
 checkpoint = "checkpoints/unet.safetensors"
@@ -22,6 +19,8 @@ requires_grad = false
 [image_encoder]
 checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
 requires_grad = false
+
+[uncond_token]
 
 [image_proj]
 
@@ -47,6 +46,8 @@ evaluation_interval = {"number" = 500, "unit" = "step"}
 evaluation_seed = 9752
 dtype = "bfloat16"
 device="cuda"
+
+[extra_training]
 automatic_mixed_precision = true
 
 [optimizer]
@@ -99,5 +100,3 @@ validation_image_paths = [
 [compute_grad_norms]
 
 [compute_param_norms]
-
-[save_adapter]

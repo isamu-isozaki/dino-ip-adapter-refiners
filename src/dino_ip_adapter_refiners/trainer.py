@@ -17,43 +17,16 @@ from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
 from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
 from dino_ip_adapter_refiners.data import DatasetAdapter, BatchOnlyImage, Batch
 from torch.utils.data import DataLoader
-from typing import Any, TypeVar, Generic, Callable
-from torch import Tensor, device as Device, dtype as DType, float16, float32, nn
+from typing import Any, TypeVar, Generic
+from torch import Tensor, float16, nn
 from torch.cuda.amp import GradScaler, autocast
-from refiners.training_utils.trainer import ModelConfigT, ModuleT, ModelItem, backward
-from refiners.training_utils import BaseConfig
-from refiners.fluxion import layers as fl
-from functools import cached_property, wraps
+from refiners.training_utils.trainer import backward
 from refiners.fluxion.utils import no_grad
 from refiners.training_utils.common import (
     scoped_seed,
 )
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
-
-def register_model():
-    def decorator(func: Callable[[Any, ModelConfigT], ModuleT]) -> ModuleT:
-        @wraps(func)
-        def wrapper(self: AbstractTrainer[Config, BatchT], config: ModelConfigT) -> fl.Module:
-            name = func.__name__
-            model = func(self, config)
-            model = model.to(self.device, dtype=self.dtype)
-            if config.requires_grad is not None:
-                model.requires_grad_(requires_grad=config.requires_grad)
-            learnable_parameters = [param for param in model.parameters() if param.requires_grad]
-            if self.config.extra_training.automatic_mixed_precision:
-                # For all parameters we train in automatic mixed precision we want them to be in float32.
-                for learnable_parameter in learnable_parameters:
-                    learnable_parameter.to(dtype=float32)
-            self.models[name] = ModelItem(
-                name=name, config=config, model=model, learnable_parameters=learnable_parameters
-            )
-            setattr(self, name, self.models[name].model)
-            return model
-
-        return wrapper  # type: ignore
-
-    return decorator
 
 # from https://github.com/finegrain-ai/refiners/pull/290
 class AMPTrainer(

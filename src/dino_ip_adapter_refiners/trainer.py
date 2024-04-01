@@ -16,6 +16,8 @@ from dino_ip_adapter_refiners.diffusion_utils import (
 from dino_ip_adapter_refiners.mixin.evaluation import EvaluationMixin
 from dino_ip_adapter_refiners.mixin.ip_adapter import IPAdapterMixin
 from dino_ip_adapter_refiners.data import DatasetAdapter, BatchOnlyImage, Batch
+from dino_ip_adapter_refiners.utils import register_model
+
 from torch.utils.data import DataLoader
 from typing import Any, TypeVar, Generic
 from torch import Tensor, float16, nn
@@ -75,7 +77,7 @@ class AMPTrainer(
     def step(self, batch: BatchT) -> None:
         """Perform a single training step."""
         self._call_callbacks(event_name="on_compute_loss_begin")
-        with autocast(dtype=self.dtype, enabled=self.config.training.automatic_mixed_precision):
+        with autocast(dtype=self.dtype, enabled=self.config.extra_training.automatic_mixed_precision):
             loss = self.compute_loss(batch=batch)
         self.loss = loss
         self._call_callbacks(event_name="on_compute_loss_end")
@@ -87,15 +89,15 @@ class AMPTrainer(
         """Evaluate the model."""
         self.set_models_to_mode(mode="eval")
         self._call_callbacks(event_name="on_evaluate_begin")
-        with autocast(dtype=self.dtype, enabled=self.config.training.automatic_mixed_precision):
+        with autocast(dtype=self.dtype, enabled=self.config.extra_training.automatic_mixed_precision):
             self.compute_evaluation()
         self._call_callbacks(event_name="on_evaluate_end")
         self.set_models_to_mode(mode="train")
 
 class BaseTrainer(AMPTrainer[BatchT]):
     def __init__(self, config: Config):
-        super().__init__(config)
         self.dataset_adapter = DatasetAdapter(config.dataset)
+        super().__init__(config)
     def get_item(self, index: int) -> BatchT:
         return self.dataset_adapter.get_item(index)
     def collate_fn(self, batch: list[BatchT]) -> BatchT:

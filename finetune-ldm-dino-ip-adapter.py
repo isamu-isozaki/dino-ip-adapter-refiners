@@ -1,13 +1,13 @@
-# type: ignore
 import random
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, List
+from typing import Any, List, Callable
 import os
 import datasets
 from loguru import logger
 from PIL import Image
 from pydantic import BaseModel
+from jaxtyping import Float
 from torch import (
     tensor,
     Tensor,
@@ -21,23 +21,23 @@ from torch import (
     stack,
     randn_like,
     no_grad,
+    randint,
     float32,
     zeros,
     ones,
-    multinomial,
+    norm,
+    multinomial
 )
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, default_collate
 
 from torch.cuda import empty_cache
+from torch.distributions import Beta
 from torch.nn import Module, Linear, Embedding, LayerNorm
 from torch.nn.init import trunc_normal_
 from torch.nn.functional import mse_loss
-from torchvision.transforms import (
-    Compose,
-    RandomCrop,
-    RandomHorizontalFlip,
-    CenterCrop,
-)
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset
+from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, CenterCrop, Resize
 from refiners.foundationals.dinov2 import (
     DINOv2_small,
     DINOv2_small_reg,
@@ -48,32 +48,19 @@ from refiners.foundationals.dinov2 import (
     ViT,
 )
 from refiners.foundationals.clip.text_encoder import CLIPTextEncoderL
-from refiners.foundationals.latent_diffusion.cross_attention import (
-    CrossAttentionBlock2d,
-)
+from refiners.foundationals.latent_diffusion.cross_attention import CrossAttentionBlock2d
 from refiners.fluxion.utils import image_to_tensor, normalize
 
+import refiners.fluxion.layers as fl
 from refiners.fluxion.utils import save_to_safetensors
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.image_prompt import (
-    SD1IPAdapter,
-    get_sd1_image_proj,
-)
+from refiners.foundationals.latent_diffusion.stable_diffusion_1.image_prompt import SD1IPAdapter, get_sd1_image_proj
 from refiners.foundationals.latent_diffusion.solvers.ddpm import DDPM
 from refiners.foundationals.latent_diffusion.solvers.dpm import DPMSolver
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
-    SD1Autoencoder,
-    SD1UNet,
-    StableDiffusion_1,
-)
-from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (
-    TextEncoderWithPoolingL,
-)
+from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import SD1Autoencoder, SD1UNet, StableDiffusion_1
+from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import TextEncoderWithPoolingL
 from refiners.training_utils.callback import Callback, CallbackConfig
 from refiners.training_utils.config import BaseConfig, ModelConfig
-from refiners.foundationals.latent_diffusion.image_prompt import (
-    ImageProjection,
-    PerceiverResampler,
-)
+from refiners.foundationals.latent_diffusion.image_prompt import ImageProjection, PerceiverResampler
 from refiners.training_utils.latent_diffusion import (
     LatentDiffusionConfig,
     TestDiffusionConfig,
@@ -94,6 +81,7 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
+from streaming import StreamingDataset  # type: ignore
 
 
 # some images of the unsplash lite dataset are bigger than the default limit
@@ -132,6 +120,8 @@ class AdapterConfig(ModelConfig):
     timestep_bias_begin: int = 0
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
+    checkpoint_path: str | None = None
+    checkpoint_steps: int = 2000
 
 
 class DatasetConfig(BaseModel):
@@ -187,13 +177,8 @@ def _init_learnable_weights(module: Module, initializer_range: float):
     elif isinstance(module, (LayerNorm)):
         if hasattr(module, "weight") and module.weight.requires_grad:
             module.weight.data.fill_(1.0)
-        if (
-            hasattr(module, "bias")
-            and module.bias is not None
-            and module.bias.requires_grad
-        ):
+        if hasattr(module, "bias") and module.bias is not None and module.bias.requires_grad:
             module.bias.data.zero_()
-
 
 # taken from simpletuner
 def generate_timestep_weights(args: AdapterConfig, num_timesteps: int) -> Tensor:
@@ -236,12 +221,10 @@ def generate_timestep_weights(args: AdapterConfig, num_timesteps: int) -> Tensor
 
     return weights
 
-
 class TestIPDiffusionConfig(TestDiffusionConfig):
     """Configuration to test the diffusion model, during the `evaluation` loop of the trainer."""
 
     validation_image_paths: List[str]
-
 
 class AdapterLatentDiffusionConfig(BaseConfig):
     """Finetunning configuration.
@@ -274,7 +257,6 @@ class IPBatch:
     text_embedding: Tensor
     pooled_text_embedding: Tensor | None
     image_embedding: Tensor
-
 
 class ComputeGradNormCallback(Callback["AdapterLatentDiffusionTrainer"]):
     """Callback to compute gradient norm"""
@@ -314,39 +296,32 @@ class ComputeParamNormCallback(Callback["AdapterLatentDiffusionTrainer"]):
 
 class SaveAdapterCallback(Callback["AdapterLatentDiffusionTrainer"]):
     """Callback to save the adapter when a checkpoint is saved."""
+    def __init__(self) -> None:
+        self.global_step = 0
+        super().__init__()
 
     def on_backward_end(self, trainer: "AdapterLatentDiffusionTrainer") -> None:
-        if trainer.clock.is_evaluation_step:
+        self.global_step += 1
+        if self.global_step % trainer.config.adapter.checkpoint_steps == 0:
             os.makedirs(trainer.config.adapter.save_folder, exist_ok=True)
             cross_attention_adapters = trainer.adapter.sub_adapters
             image_proj = trainer.adapter.image_proj
 
             tensors: dict[str, Tensor] = {}
-            tensors |= {
-                f"image_proj.{key}": value
-                for key, value in image_proj.state_dict().items()
-            }
+            tensors |= {f"image_proj.{key}": value for key, value in image_proj.state_dict().items()}
             for i, cross_attention_adapter in enumerate(cross_attention_adapters):
-                tensors |= {
-                    f"ip_adapter.{i:03d}.{key}": value
-                    for key, value in cross_attention_adapter.state_dict().items()
-                }
+                tensors |= {f"ip_adapter.{i:03d}.{key}": value for key, value in cross_attention_adapter.state_dict().items()}
             save_to_safetensors(
-                path=f"{trainer.config.adapter.save_folder}/step{trainer.clock.iteration}.safetensors",
+                path= f"{trainer.config.adapter.save_folder}/step{trainer.clock.iteration}.safetensors",
                 tensors=tensors,
             )
-
 
 def filter_keys(key_set):
     def _f(dictionary):
         return {k: v for k, v in dictionary.items() if k in key_set}
 
     return _f
-
-
-def group_by_keys_nothrow(
-    data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None
-):
+def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None):
     """Return function over iterator that groups key, value pairs into samples.
 
     :param keys: function that splits the key into key and extension (base_plus_ext)
@@ -364,11 +339,7 @@ def group_by_keys_nothrow(
         # FIXME webdataset version throws if suffix in current_sample, but we have a potential for
         #  this happening in the current LAION400m dataset if a tar ends with same prefix as the next
         #  begins, rare, but can happen since prefix aren't unique across tar files in that dataset
-        if (
-            current_sample is None
-            or prefix != current_sample["__key__"]
-            or suffix in current_sample
-        ):
+        if current_sample is None or prefix != current_sample["__key__"] or suffix in current_sample:
             if valid_sample(current_sample):
                 yield current_sample
             current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
@@ -398,7 +369,6 @@ class IPDataset(Dataset[IPBatch]):
         super().__init__()
         self.trainer = trainer
         self.dataset = self.load_huggingface_dataset()
-
     @staticmethod
     def download_images(
         urls: list[Any],
@@ -474,9 +444,7 @@ class IPDataset(Dataset[IPBatch]):
                 assert isinstance(text_embedding, Tensor)
                 assert isinstance(pooled_text_embedding, Tensor)
                 output["text_embedding"].append(text_embedding.float().cpu())
-                output["pooled_text_embedding"].append(
-                    pooled_text_embedding.float().cpu()
-                )
+                output["pooled_text_embedding"].append(pooled_text_embedding.float().cpu())
 
         return output
 
@@ -506,16 +474,9 @@ class IPDataset(Dataset[IPBatch]):
         cond_resolution: int,
     ) -> dict[str, list[Tensor]]:
         cond_images = [
-            IPDataset.cond_transform(
-                image, device, dtype, (cond_resolution, cond_resolution)
-            )
-            for image in images
+            IPDataset.cond_transform(image, device, dtype, (cond_resolution, cond_resolution)) for image in images
         ]
-        return {
-            image_encoder_column: [
-                image_encoder(cond_image).float().cpu() for cond_image in cond_images
-            ]
-        }
+        return {image_encoder_column: [image_encoder(cond_image).float().cpu() for cond_image in cond_images]}
 
     @staticmethod
     def encode_lda_images(
@@ -541,12 +502,7 @@ class IPDataset(Dataset[IPBatch]):
             )
         image_compose = Compose(image_transforms)
         lda_images: List[Image.Image] = [image_compose(image) for image in images]
-        return {
-            "lda_embedding": [
-                lda.image_to_latents(image=image).float().cpu() for image in lda_images
-            ]
-        }
-
+        return {"lda_embedding": [lda.image_to_latents(image=image).float().cpu() for image in lda_images]}
     @no_grad()
     def load_huggingface_dataset(self) -> datasets.Dataset:
         """Load the dataset from Hugging Face and apply some pre-processing."""
@@ -644,9 +600,7 @@ class IPDataset(Dataset[IPBatch]):
                     },
                     desc="Encoding conditional images into embeddings",  # type: ignore
                 )
-            if self.trainer.config.adapter.layernorm_dino and (
-                "image_embedding_layernorm" not in dataset.features
-            ):
+            if self.trainer.config.adapter.layernorm_dino and ("image_embedding_layernorm" not in dataset.features):
                 update_dataset = True
                 dataset = dataset.map(  # type: ignore
                     function=self.encode_cond_images,
@@ -677,10 +631,7 @@ class IPDataset(Dataset[IPBatch]):
                     },
                     desc="Encoding lda images into embeddings",  # type: ignore
                 )
-        if "text_embedding" not in dataset.features or (
-            ("pooled_text_embedding" not in dataset.features)
-            and self.trainer.config.adapter.use_pooled_text_embedding
-        ):
+        if "text_embedding" not in dataset.features or (("pooled_text_embedding" not in dataset.features) and self.trainer.config.adapter.use_pooled_text_embedding):
             update_dataset = True
             # encode the captions into text embedding
             dataset = dataset.rename_column(dataset_config.caption_column, "caption")  # type: ignore
@@ -702,10 +653,10 @@ class IPDataset(Dataset[IPBatch]):
             columns=["text_embedding", "image_embedding", "lda_embedding"],
         )
         if dataset_save_path and update_dataset:
-            dataset.save_to_disk(dataset_save_path + "_update")
+            dataset.save_to_disk(dataset_save_path+"_update")
             del dataset
             shutil.rmtree(dataset_save_path)
-            os.rename(dataset_save_path + "_update", dataset_save_path)
+            os.rename(dataset_save_path+"_update", dataset_save_path)
         return dataset  # type: ignore
 
     def transform(self, data: dict[str, Any]) -> IPBatch:
@@ -713,10 +664,7 @@ class IPDataset(Dataset[IPBatch]):
         if not self.trainer.config.dataset.pre_encode:
             image = data["image"]
             cond_image = self.cond_transform(
-                image,
-                self.trainer.device,
-                self.trainer.dtype,
-                (self.trainer.cond_resolution, self.trainer.cond_resolution),
+                image, self.trainer.device, self.trainer.dtype, (self.trainer.cond_resolution, self.trainer.cond_resolution)
             )
             image_embedding = self.trainer.adapter.image_encoder(cond_image)
             # apply augmentation to the image
@@ -731,9 +679,7 @@ class IPDataset(Dataset[IPBatch]):
                 )
             if self.trainer.config.dataset.horizontal_flip_probability:
                 image_transforms.append(
-                    RandomHorizontalFlip(
-                        p=self.trainer.config.dataset.horizontal_flip_probability
-                    ),
+                    RandomHorizontalFlip(p=self.trainer.config.dataset.horizontal_flip_probability),
                 )
             image_compose = Compose(image_transforms)
             image = image_compose(image)  # type: ignore
@@ -744,9 +690,7 @@ class IPDataset(Dataset[IPBatch]):
             image_embedding = data["image_embedding"]
             latent = data["lda_embedding"]
         text_embedding = data["text_embedding"]
-        pooled_text_embedding = data.get(
-            "pooled_text_embedding", self.trainer.empty_pooled_text_embedding
-        )
+        pooled_text_embedding = data.get("pooled_text_embedding", self.trainer.empty_pooled_text_embedding)
         if not isinstance(pooled_text_embedding, Tensor):
             assert isinstance(pooled_text_embedding, list)
             pooled_text_embedding = Tensor(pooled_text_embedding)
@@ -769,17 +713,13 @@ class IPDataset(Dataset[IPBatch]):
         return len(self.dataset)
 
 
-class AdapterLatentDiffusionTrainer(
-    Trainer[AdapterLatentDiffusionConfig, IPBatch], WandbMixin
-):
+class AdapterLatentDiffusionTrainer(Trainer[AdapterLatentDiffusionConfig, IPBatch], WandbMixin):
     def collate_fn(self, batch: list[IPBatch]) -> IPBatch:
         latents = cat(tensors=[item.latent for item in batch])
         text_embeddings = cat(tensors=[item.text_embedding for item in batch])
         pooled_text_embeddings = None
         if self.config.adapter.use_pooled_text_embedding:
-            pooled_text_embeddings = cat(
-                tensors=[item.pooled_text_embedding for item in batch]
-            )
+            pooled_text_embeddings = cat(tensors=[item.pooled_text_embedding for item in batch])
         image_embeddings = cat([item.image_embedding for item in batch])
         return IPBatch(
             latent=latents,
@@ -787,15 +727,12 @@ class AdapterLatentDiffusionTrainer(
             pooled_text_embedding=pooled_text_embeddings,
             image_embedding=image_embeddings,
         )
-
     def collate_fn_from_dict(self, batch: list[dict]) -> IPBatch:
         latents = cat(tensors=[item["latent"][None] for item in batch])
         text_embeddings = cat(tensors=[item["text_embedding"][None] for item in batch])
         pooled_text_embeddings = None
         if self.config.adapter.use_pooled_text_embedding:
-            pooled_text_embeddings = cat(
-                tensors=[item["pooled_text_embedding"][None] for item in batch]
-            )
+            pooled_text_embeddings = cat(tensors=[item["pooled_text_embedding"][None] for item in batch])
         image_embeddings = cat([item["image_embedding"][None] for item in batch])
         return IPBatch(
             latent=latents,
@@ -803,7 +740,6 @@ class AdapterLatentDiffusionTrainer(
             pooled_text_embedding=pooled_text_embeddings,
             image_embedding=image_embeddings,
         )
-
     @staticmethod
     def approximate_loss(timestep: int, /) -> float:
         a = 3.1198626909458634e-08
@@ -812,7 +748,6 @@ class AdapterLatentDiffusionTrainer(
         c = -13.269541143845919
         C = 0.36245161978354973
         return a * timestep**exponent + b * math.exp(-c / (timestep - 1001)) + C
-
     def drop_latents(self, image_embedding, text_embedding, pooled_text_embedding=None):
         dataset_config = self.config.dataset
         rand_num = random.random()
@@ -821,16 +756,12 @@ class AdapterLatentDiffusionTrainer(
                 image_embedding = zeros_like(image_embedding)
             else:
                 image_embedding = self.black_image_embedding
-        elif rand_num < (
-            dataset_config.image_drop_rate + dataset_config.text_drop_rate
-        ):
+        elif rand_num < (dataset_config.image_drop_rate + dataset_config.text_drop_rate):
             text_embedding = self.empty_text_embedding
             if self.config.adapter.use_pooled_text_embedding:
                 pooled_text_embedding = self.empty_pooled_text_embedding
         elif rand_num < (
-            dataset_config.image_drop_rate
-            + dataset_config.text_drop_rate
-            + dataset_config.text_and_image_drop_rate
+            dataset_config.image_drop_rate + dataset_config.text_drop_rate + dataset_config.text_and_image_drop_rate
         ):
             text_embedding = self.empty_text_embedding
             if self.config.adapter.use_pooled_text_embedding:
@@ -840,7 +771,6 @@ class AdapterLatentDiffusionTrainer(
             else:
                 image_embedding = self.black_image_embedding
         return image_embedding, text_embedding, pooled_text_embedding
-
     @cached_property
     def dataset_length(self) -> int:
         """
@@ -851,7 +781,6 @@ class AdapterLatentDiffusionTrainer(
         if self.config.dataset.webdataset:
             return self.config.dataset.num_train_examples
         return len(self.dataset)
-
     @register_model()
     def lda(self, lda_config: ModelConfig) -> SD1Autoencoder:
         return SD1Autoencoder(
@@ -866,9 +795,7 @@ class AdapterLatentDiffusionTrainer(
         )
 
     @register_model()
-    def text_encoder(
-        self, text_encoder_config: ModelConfig
-    ) -> CLIPTextEncoderL | TextEncoderWithPoolingL:
+    def text_encoder(self, text_encoder_config: ModelConfig) -> CLIPTextEncoderL | TextEncoderWithPoolingL:
         text_encoder = CLIPTextEncoderL(
             device=self.device,
         )
@@ -894,23 +821,16 @@ class AdapterLatentDiffusionTrainer(
         return image_encoder_cls()
 
     @register_model()
-    def image_proj(
-        self, image_proj_config: ModelConfig
-    ) -> ImageProjection | PerceiverResampler:
+    def image_proj(self, image_proj_config: ModelConfig) -> ImageProjection | PerceiverResampler:
         cross_attn_2d = self.unet.ensure_find(CrossAttentionBlock2d)
         image_proj = get_sd1_image_proj(
-            self.image_encoder,
-            self.unet,
-            cross_attn_2d,
-            self.config.adapter.fine_grained,
-            self.config.adapter.use_bias,
-            device=self.device,
-            dtype=float32,
+            self.image_encoder, self.unet, cross_attn_2d, self.config.adapter.fine_grained, self.config.adapter.use_bias, device=self.device, dtype=float32
         )
         image_proj.requires_grad_(True)
-        for module in image_proj.modules():
-            _init_learnable_weights(module, self.config.adapter.initializer_range)
-        i = 0
+        if self.config.adapter.checkpoint_path is None:
+            for module in image_proj.modules():
+                _init_learnable_weights(module, self.config.adapter.initializer_range)
+        i=0
         for param in image_proj.parameters():
             if param.requires_grad:
                 i += 1
@@ -924,8 +844,8 @@ class AdapterLatentDiffusionTrainer(
         # At the point this gets called the unet, image_encoder, and image_proj will get called thanks to @register_model
         ip_adapter = SD1IPAdapter(
             target=self.unet,
-            weights=load_from_safetensors(self.config.adapter.checkpoint)
-            if self.config.adapter.checkpoint is not None
+            weights=load_from_safetensors(self.config.adapter.checkpoint_path)
+            if self.config.adapter.checkpoint_path is not None
             else None,
             strict=False,
             fine_grained=self.config.adapter.fine_grained,
@@ -936,16 +856,16 @@ class AdapterLatentDiffusionTrainer(
             image_proj=self.image_proj,
             use_bias=self.config.adapter.use_bias,
             layernorm_dino=self.config.adapter.layernorm_dino,
-            weighted_sum=self.config.adapter.weighted_sum,
+            weighted_sum=self.config.adapter.weighted_sum
         ).inject()
         for adapter in ip_adapter.sub_adapters:
             adapter.image_cross_attention.requires_grad_(True)
             adapter.image_cross_attention.to(self.device, float32)
+        if self.config.adapter.checkpoint_path is None:
+            for module in ip_adapter.modules():
+                _init_learnable_weights(module, self.config.adapter.initializer_range)
 
-        for module in ip_adapter.modules():
-            _init_learnable_weights(module, self.config.adapter.initializer_range)
-
-        i = 0
+        i=0
         for param in ip_adapter.parameters():
             if param.requires_grad:
                 i += 1
@@ -967,10 +887,7 @@ class AdapterLatentDiffusionTrainer(
 
     @cached_property
     def timestep_weights(self) -> Tensor:
-        return generate_timestep_weights(self.config.adapter, 1000).to(
-            self.device, dtype=float32
-        )
-
+        return generate_timestep_weights(self.config.adapter, 1000).to(self.device, dtype=float32)
     def get_constants(self):
         self.cond_resolution: int = self.config.adapter.resolution
         if isinstance(self.text_encoder, TextEncoderWithPoolingL):
@@ -979,23 +896,9 @@ class AdapterLatentDiffusionTrainer(
         else:
             self.empty_text_embedding = self.text_encoder("").float().cpu()
             self.empty_pooled_text_embedding = self.text_encoder("").float().cpu()[:, 1]
-        self.black_image_embedding = (
-            self.image_encoder(
-                zeros((1, 3, self.cond_resolution, self.cond_resolution)).to(
-                    self.device, dtype=self.dtype
-                )
-            )
-            .float()
-            .cpu()
-        )
-
+        self.black_image_embedding = self.image_encoder(zeros((1, 3, self.cond_resolution, self.cond_resolution)).to(self.device, dtype=self.dtype)).float().cpu()
     def load_web_dataset(self) -> wds.DataPipeline:
-        all_keys = [
-            "text_embedding",
-            "pooled_text_embedding",
-            "latent",
-            "image_embedding",
-        ]
+        all_keys = ["text_embedding", "pooled_text_embedding", "latent", "image_embedding"]
         if self.config.adapter.layernorm_dino:
             image_encoder_pth = "dinov2_vitl14_reg4_pretrain.pth"
         else:
@@ -1003,10 +906,7 @@ class AdapterLatentDiffusionTrainer(
         if isinstance(self.text_encoder, CLIPTextEncoderL):
             all_keys.remove("pooled_text_embedding")
         processing_pipeline = [
-            wds.decode(
-                wds.handle_extension("pth", wds.autodecode.torch_loads),
-                handler=wds.ignore_and_continue,
-            ),
+            wds.decode(wds.handle_extension("pth", wds.autodecode.torch_loads), handler=wds.ignore_and_continue),
             wds.rename(
                 text_embedding="CLIPL.pth".lower(),
                 pooled_text_embedding="CLIPLPool.pth".lower(),
@@ -1021,37 +921,27 @@ class AdapterLatentDiffusionTrainer(
             tarfile_to_samples_nothrow,
             wds.shuffle(self.config.dataset.shuffle_buffer_size),
             *processing_pipeline,
-            wds.batched(
-                self.config.training.batch_size,
-                partial=False,
-                collation_fn=self.collate_fn_from_dict,
-            ),
+            wds.batched(self.config.training.batch_size, partial=False, collation_fn=self.collate_fn_from_dict),
         ]
         global_batch_size = self.config.training.batch_size
         num_workers = self.config.training.dataset_workers
         num_train_examples = self.config.dataset.num_train_examples
-        num_worker_batches = math.ceil(
-            num_train_examples / (global_batch_size * num_workers)
-        )  # per dataloader worker
+        num_worker_batches = math.ceil(num_train_examples / (global_batch_size * num_workers))  # per dataloader worker
 
         # each worker is iterating over this
         return wds.DataPipeline(*pipeline).with_epoch(num_worker_batches)
-
     def load_dataset(self) -> IPDataset:
         self.get_constants()
         if self.config.dataset.webdataset:
             return self.load_web_dataset()
         return IPDataset(trainer=self)
-
     @cached_property
     def dataloader(self) -> DataLoader[Any]:
         global_batch_size = self.config.training.batch_size
         num_workers = self.config.training.dataset_workers
         num_train_examples = self.config.dataset.num_train_examples
         num_batches = math.ceil(num_train_examples / global_batch_size)
-        num_worker_batches = math.ceil(
-            num_train_examples / (global_batch_size * num_workers)
-        )  # per dataloader worker
+        num_worker_batches = math.ceil(num_train_examples / (global_batch_size * num_workers))  # per dataloader worker
         num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
 
@@ -1068,51 +958,41 @@ class AdapterLatentDiffusionTrainer(
             dataloader.num_samples = num_samples
             return dataloader
         return DataLoader(
-            dataset=self.dataset,
-            batch_size=self.config.training.batch_size,
-            num_workers=self.config.training.dataset_workers,
-            shuffle=True,
-            collate_fn=self.collate_fn,
+            dataset=self.dataset, batch_size=self.config.training.batch_size, num_workers=self.config.training.dataset_workers, shuffle=True, collate_fn=self.collate_fn
         )
-
     def sample_timestep(self, batch_size: int, /) -> Tensor:
         """Sample a timestep from a uniform distribution."""
         assert isinstance(self, Trainer), "This mixin can only be used with a Trainer"
-        random_steps = (
-            999
-            - multinomial(self.timestep_weights, batch_size, replacement=True).long()
-        )
+        random_steps = 999-multinomial(self.timestep_weights, batch_size, replacement=True).long()
         self.random_steps = random_steps
         return self.ddpm_solver.timesteps[random_steps]
 
-    def add_noise_to_latents(self, latents: Tensor, noise: Tensor) -> Tensor:
+    def add_noise_to_latents(
+        self, latents: Tensor, noise: Tensor
+    ) -> Tensor:
         """Add noise to latents."""
         return cat(
             [
                 self.ddpm_solver.add_noise(
-                    latents[i : i + 1],
-                    noise[i : i + 1],
-                    int(self.random_steps[i].item()),
+                    latents[i : i + 1], noise[i : i + 1], int(self.random_steps[i].item())
                 )
                 for i in range(latents.shape[0])
             ],
             dim=0,
         )
-
-    def remove_noise_from_latents(self, latents: Tensor, noise: Tensor) -> Tensor:
+    def remove_noise_from_latents(
+        self, latents: Tensor, noise: Tensor
+    ) -> Tensor:
         """Add noise to latents."""
         return cat(
             [
                 self.ddpm_solver.remove_noise(
-                    latents[i : i + 1],
-                    noise[i : i + 1],
-                    int(self.random_steps[i].item()),
+                    latents[i : i + 1], noise[i : i + 1], int(self.random_steps[i].item())
                 )
                 for i in range(latents.shape[0])
             ],
             dim=0,
         )
-
     def sample_noise(self, size: tuple[int, ...], dtype: DType | None = None) -> Tensor:
         return sample_noise(
             size=size,
@@ -1128,35 +1008,20 @@ class AdapterLatentDiffusionTrainer(
         batch_size = latents.shape[0]
         text_embeddings = batch.text_embedding.to(self.device, dtype=self.dtype)
         if self.config.adapter.use_pooled_text_embedding:
-            pooled_text_embeddings = batch.pooled_text_embedding.to(
-                self.device, dtype=self.dtype
-            )
+            pooled_text_embeddings = batch.pooled_text_embedding.to(self.device, dtype=self.dtype)
         div_factor = self.config.adapter.image_embedding_div_factor
-        image_embeddings = (
-            batch.image_embedding.to(self.device, dtype=input_dtype) / div_factor
-        )
-        print(image_embeddings.shape, latents.shape, text_embeddings.shape)
+        image_embeddings = batch.image_embedding.to(self.device, dtype=input_dtype)/div_factor
         for i in range(batch_size):
             if self.config.adapter.use_pooled_text_embedding:
-                (
-                    image_embeddings[i],
-                    text_embeddings[i],
-                    pooled_text_embeddings[i],
-                ) = self.drop_latents(
-                    image_embeddings[i], text_embeddings[i], pooled_text_embeddings[i]
-                )
+                image_embeddings[i], text_embeddings[i], pooled_text_embeddings[i] = self.drop_latents(image_embeddings[i], text_embeddings[i], pooled_text_embeddings[i])
             else:
-                image_embeddings[i], text_embeddings[i], _ = self.drop_latents(
-                    image_embeddings[i], text_embeddings[i]
-                )
+                image_embeddings[i], text_embeddings[i], _ = self.drop_latents(image_embeddings[i], text_embeddings[i])
         image_embeddings = self.image_proj(image_embeddings)
         # set IP embeddings context
-        self.adapter.set_image_embedding(image_embeddings)
+        self.adapter.set_image_context(image_embeddings)
         # set pooled text embedding
         if self.config.adapter.use_pooled_text_embedding:
-            self.adapter.set_pooled_text_embedding(
-                pooled_text_embeddings / self.config.adapter.pooled_text_div_factor
-            )
+            self.adapter.set_pooled_text_embedding(pooled_text_embeddings/self.config.adapter.pooled_text_div_factor)
         # set text embeddings context
         self.unet.set_clip_text_embedding(clip_text_embedding=text_embeddings)
 
@@ -1177,9 +1042,7 @@ class AdapterLatentDiffusionTrainer(
         # compute mse loss
         snr_gamma = self.config.ldm.snr_gamma
         rescaler = self.config.adapter.use_rescaler
-        loss = mse_loss(
-            input=prediction.float(), target=noise.float(), reduction="none"
-        )
+        loss = mse_loss(input=prediction.float(), target=noise.float(), reduction="none")
         if rescaler:
             scales = tensor(
                 [self.approximate_loss(999 - int(t.item())) for t in timestep],
@@ -1196,9 +1059,7 @@ class AdapterLatentDiffusionTrainer(
             signal_to_noise_ratios = self.signal_to_noise_ratios[timestep]
 
             mse_loss_weights = (
-                stack(
-                    [signal_to_noise_ratios, snr_gamma * ones_like(timestep)], dim=1
-                ).min(dim=1)[0]
+                stack([signal_to_noise_ratios, snr_gamma * ones_like(timestep)], dim=1).min(dim=1)[0]
                 / signal_to_noise_ratios
             )
             loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
@@ -1211,11 +1072,9 @@ class AdapterLatentDiffusionTrainer(
         sd = StableDiffusion_1(
             unet=self.unet,
             lda=self.lda,
-            solver=DPMSolver(
-                num_inference_steps=self.config.test_ldm.num_inference_steps
-            ),
+            solver=DPMSolver(num_inference_steps=self.config.test_ldm.num_inference_steps),
             device=self.device,
-            dtype=pipeline_dtype,
+            dtype=pipeline_dtype
         )
         self.adapter.scale = self.config.adapter.inference_scale
         # retreive data from config
@@ -1225,10 +1084,7 @@ class AdapterLatentDiffusionTrainer(
         num_images_per_prompt = self.config.test_ldm.num_images_per_prompt
         if self.config.test_ldm.use_short_prompts:
             prompts = [prompt.split(sep=",")[0] for prompt in prompts]
-        cond_images = [
-            Image.open(validation_image_path)
-            for validation_image_path in validation_image_paths
-        ]
+        cond_images = [Image.open(validation_image_path) for validation_image_path in validation_image_paths]
 
         # for each prompt generate `num_images_per_prompt` images
         # TODO: remove this for loop, batch things up
@@ -1236,9 +1092,7 @@ class AdapterLatentDiffusionTrainer(
         for i in range(len(cond_images)):
             images[f"condition images_{i}"] = cond_images[i]
         for prompt, cond_image in zip(prompts, cond_images):
-            canvas_image = Image.new(
-                mode="RGB", size=(512, 512 * num_images_per_prompt)
-            )
+            canvas_image = Image.new(mode="RGB", size=(512, 512 * num_images_per_prompt))
             conditional_embedding = self.text_encoder(prompt)
             negative_embedding = self.text_encoder("")
             if self.config.adapter.use_pooled_text_embedding:
@@ -1249,60 +1103,46 @@ class AdapterLatentDiffusionTrainer(
                 assert isinstance(conditional_embedding, tuple)
                 assert isinstance(conditional_embedding[0], Tensor)
                 assert isinstance(conditional_embedding[1], Tensor)
-                clip_text_embedding = cat(
-                    tensors=(negative_embedding[0], conditional_embedding[0]), dim=0
-                )
-                pooled_clip_text_embedding = cat(
-                    tensors=(negative_embedding[1], conditional_embedding[1]), dim=0
-                )
+                clip_text_embedding = cat(tensors=(negative_embedding[0], conditional_embedding[0]), dim=0)
+                pooled_clip_text_embedding = cat(tensors=(negative_embedding[1], conditional_embedding[1]), dim=0)
             else:
                 assert isinstance(self.text_encoder, CLIPTextEncoderL)
                 assert isinstance(negative_embedding, Tensor)
                 assert isinstance(conditional_embedding, Tensor)
-                clip_text_embedding = cat(
-                    tensors=(negative_embedding, conditional_embedding), dim=0
-                )
+                clip_text_embedding = cat(tensors=(negative_embedding, conditional_embedding), dim=0)
+
+
 
             cond_resolution = self.config.adapter.resolution
             image_embedding = self.adapter.compute_image_embedding(
-                self.adapter.preprocess_image(
-                    cond_image, (cond_resolution, cond_resolution)
-                ).to(self.device, dtype=self.dtype),
-                div_factor=self.config.adapter.image_embedding_div_factor,
+                self.adapter.preprocess_image(cond_image, (cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype),
+                div_factor=self.config.adapter.image_embedding_div_factor
             )
             # TODO: pool text according to end of text id for pooled text embeds if given option
             for i in range(num_images_per_prompt):
-                logger.info(
-                    f"Generating image {i+1}/{num_images_per_prompt} for prompt: {prompt}"
-                )
+                logger.info(f"Generating image {i+1}/{num_images_per_prompt} for prompt: {prompt}")
                 x = randn(1, 4, 64, 64, device=self.device, dtype=self.dtype)
-                self.adapter.set_image_embedding(image_embedding)
+                self.adapter.set_image_context(image_embedding)
                 if self.config.adapter.use_pooled_text_embedding:
-                    self.adapter.set_pooled_text_embedding(
-                        pooled_clip_text_embedding
-                        / self.config.adapter.pooled_text_div_factor
-                    )
+                    self.adapter.set_pooled_text_embedding(pooled_clip_text_embedding/self.config.adapter.pooled_text_div_factor)
                 for step in sd.steps:
                     x = sd(
                         x=x,
                         step=step,
                         clip_text_embedding=clip_text_embedding,
-                        condition_scale=self.config.test_ldm.condition_scale,
+                        condition_scale=self.config.test_ldm.condition_scale
                     )
                 canvas_image.paste(sd.lda.decode_latents(x=x), box=(0, 512 * i))
             images[prompt] = canvas_image
         # log images to wandb
         self.wandb_log(data=images)
         self.adapter.scale = self.config.adapter.scale
-
     @register_callback()
     def compute_grad_norms(self, config: CallbackConfig) -> ComputeGradNormCallback:
         return ComputeGradNormCallback()
-
     @register_callback()
     def compute_param_norms(self, config: CallbackConfig) -> ComputeParamNormCallback:
         return ComputeParamNormCallback()
-
     @register_callback()
     def save_adapter(self, config: CallbackConfig) -> SaveAdapterCallback:
         return SaveAdapterCallback()
@@ -1314,6 +1154,9 @@ class AdapterLatentDiffusionTrainer(
         # if initializing after, the on_init_end methods do not get called for the extended callbacks. So all these callbacks
         # can't have on_init
         super().__init__(config=config)
+
+
+
 
 
 if __name__ == "__main__":

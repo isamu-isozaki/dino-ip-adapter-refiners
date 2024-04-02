@@ -9,9 +9,15 @@ unet_checkpoint = "checkpoints/unet.safetensors"
 text_encoder_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
 lda_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
 image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
+input_pertubation = 0.0
+loss_scaler="legacy"
 
 [unet]
 requires_grad = false
+
+[image_proj]
+
+[uncond_image_embedding]
 
 [ip_adapter]
 image_encoder_type = "dinov2_vitl14_reg4"
@@ -24,6 +30,7 @@ initialize_model = true
 initializer_range = 0.02
 use_rescaler = true
 weighted_sum = true
+use_uncond_image_embedding = true
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}

@@ -28,6 +28,7 @@ class IPAdapterConfig(ModelConfig):
     timestep_bias_begin: int = 0
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
+    use_uncond_image_embedding: bool = True
 
 class IPTrainingConfig(TrainingConfig):
     automatic_mixed_precision: bool = (
@@ -38,6 +39,8 @@ class IPTrainingConfig(TrainingConfig):
     lda_checkpoint: str = "checkpoints/CLIPTextEncoderL.safetensors"
     image_encoder_checkpoint: str = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
     ip_adapter_checkpoint: str | None = None
+    input_pertubation: float = 0.0
+    loss_scaler: str = "legacy"
 
 class SaveAdapterConfig(CallbackConfig):
     checkpoint_steps: int = 2000
@@ -84,7 +87,7 @@ class Config(BaseConfig):
     # text_encoder: ModelConfig
     # image_encoder: ModelConfig
     # image proj has to be after image encoder or it fails
-    # image_proj: ModelConfig
-    # uncond_token: ModelConfig
+    image_proj: ModelConfig
+    uncond_image_embedding: ModelConfig
     # adapter needs to be initialized later for this to work
     ip_adapter: IPAdapterConfig

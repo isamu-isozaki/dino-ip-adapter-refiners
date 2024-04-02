@@ -374,7 +374,7 @@ def generation_and_clip_score_calc(args):
                             scale_dir, f"{class_prompt}_{idx}_{i}.png"
                         )
                         x = randn(1, 4, 64, 64, device=device, dtype=dtype)
-                        adapter.set_image_embedding(image_embedding)
+                        adapter.set_image_context(image_embedding)
                         if use_pooled_text_embedding:
                             adapter.set_pooled_text_embedding(
                                 pooled_clip_text_embedding

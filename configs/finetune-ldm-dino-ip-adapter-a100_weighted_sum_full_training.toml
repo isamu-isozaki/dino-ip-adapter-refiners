@@ -85,10 +85,10 @@ prompts = [
     "Pink flamingo playing soccer"
 ]
 validation_image_paths = [
-    "tests/weights/frida.jpg",
-    "tests/weights/cute_cats.jpg",
-    "tests/weights/ferret.jpg",
-    "tests/weights/pink_flamingo.jpg"
+    "checkpoints/frida.jpg",
+    "checkpoints/cute_cats.jpg",
+    "checkpoints/ferret.jpg",
+    "checkpoints/pink_flamingo.jpg"
 ]
 [compute_grad_norms]
 

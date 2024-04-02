@@ -312,6 +312,8 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                         continue
                     cross_attention_weights[k[len(prefix):]] = v
                 cross_attn.load_state_dict(cross_attention_weights, strict=False)
+            if use_uncond_image_embedding:
+                self._unconditional_image_embedding[0].uncond_token = weights["uncond_image_embedding"]
 
     @property
     def image_proj(self) -> PerceiverResampler:

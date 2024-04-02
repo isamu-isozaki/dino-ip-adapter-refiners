@@ -195,6 +195,8 @@ class BaseTrainer(
                 std=[0.26862954, 0.26130258, 0.27577711],
             )
             image_embedding = image_encoder(cond_image)
+            image_embedding = self.image_proj(cond_image)
+
             # TODO: pool text according to end of text id for pooled text embeds if given option
             for i in range(num_images_per_prompt):
                 logger.info(f"Generating image {i+1}/{num_images_per_prompt} for prompt: {prompt}")

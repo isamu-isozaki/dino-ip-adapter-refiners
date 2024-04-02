@@ -364,7 +364,7 @@ class IPAdapterMixin(
         )
         image_proj.to(dtype=float32)
         image_proj.requires_grad_(True)
-        for module in self.image_proj.modules():
+        for module in image_proj.modules():
             _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
         return image_proj
     @register_model()

@@ -24,7 +24,6 @@ def register_model():
             self.models[name] = ModelItem(
                 name=name, config=config, model=model, learnable_parameters=learnable_parameters
             )
-            print(name)
             setattr(self, name, self.models[name].model)
             return model
 

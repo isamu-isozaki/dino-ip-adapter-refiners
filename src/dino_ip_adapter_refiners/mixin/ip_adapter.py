@@ -368,9 +368,11 @@ class IPAdapterMixin(
             _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
         return image_proj
     @register_model()
-    def uncond_image_embedding(self, config: ModelConfig) -> nn.Parameter:
-        token: nn.Parameter = nn.Parameter(
-            torch.randn(1, 128, 1024, device=self.device)
+    def uncond_image_embedding(self, config: ModelConfig) -> nn.Module:
+        token = nn.Module(
+            nn.Parameter(
+                torch.randn(1, 128, 1024, device=self.device)
+            )
         )
         token.requires_grad_(True)
         return token

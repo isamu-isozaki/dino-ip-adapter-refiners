@@ -7,6 +7,10 @@ from torch import float32, Tensor
 from refiners.training_utils.trainer import ModelConfigT, ModuleT, ModelItem
 from refiners.fluxion import layers as fl
 from functools import wraps
+import PIL
+from PIL import Image
+import numpy as np
+import torch
 def register_model():
     def decorator(func: Callable[[Any, ModelConfigT], ModuleT]) -> ModuleT:
         @wraps(func)
@@ -30,3 +34,28 @@ def register_model():
         return wrapper  # type: ignore
 
     return decorator
+
+def pil2tensor(image_: Image):
+    mode = image_.mode
+    if mode != "RGB":
+        image_ = image_.convert("RGB")
+
+    height = image_.height
+    width = image_.width
+
+    if hasattr(image_, "getbands"):
+        channels = len(image_.getbands())
+    else:
+        channels = image_.channels
+
+    nptype = np.uint8
+
+    image_ = np.array(image_, nptype)
+    image_ = torch.from_numpy(image_)
+    image_: torch.Tensor = image_.to("cuda")
+
+    image_ = image_.view(height, width, channels)
+    image_ = image_.permute((2, 0, 1)).contiguous()
+
+    image_ = image_.to(dtype=torch.float32).div(255)
+    return image_

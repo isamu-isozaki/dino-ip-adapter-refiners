@@ -266,7 +266,6 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
             assert isinstance(text_embeddings, Tensor)
             image_embeddings[i], text_embeddings[i] = self.drop_latents(image_embeddings[i], text_embeddings[i])
     print(image_embeddings.shape)
-    print(text_embeddings.shape)
     print(latents.shape)
 
 

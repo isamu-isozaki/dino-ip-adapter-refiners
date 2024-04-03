@@ -14,7 +14,7 @@ from functools import cached_property
 from dino_ip_adapter_refiners.mixin import IPAdapterMixin, AMPMixin, DataMixin
 from dino_ip_adapter_refiners.data import BatchOnlyImage, Batch
 from dino_ip_adapter_refiners.config import SaveAdapterConfig
-from dino_ip_adapter_refiners.utils import pil2tensor
+from refiners.fluxion.utils import image_to_tensor
 from refiners.training_utils import CallbackConfig
 
 from typing import TypeVar, Generic
@@ -180,7 +180,7 @@ class BaseTrainer(
             clip_text_embedding = cat(tensors=(negative_embedding, conditional_embedding), dim=0)
 
             cond_resolution = self.config.ip_adapter.resolution
-            cond_image = pil2tensor(cond_image)
+            cond_image = image_to_tensor(cond_image)
             cond_image = TF.resize(
                 cond_image,
                 size=cond_resolution,

@@ -361,14 +361,15 @@ class IPAdapterMixin(
     @register_model()
     def image_proj(self, config: ModelConfig) -> PerceiverResampler:
         image_proj = PerceiverResampler(
-            latents_dim=1024,
-            num_attention_layers=8,
-            num_attention_heads=24,
+            latents_dim=768,
+            num_attention_layers=4,
+            num_attention_heads=12,
             head_dim=64,
-            num_tokens=128,
+            num_tokens=16,
             input_dim=1024,
-            output_dim=1024,
+            output_dim=768,
             device=self.device,
+            dtype=self.dtype,
         )
         image_proj.to(dtype=float32)
         image_proj.requires_grad_(True)

@@ -281,9 +281,9 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
     self.unet.set_timestep(timesteps)
 
     noise = sample_noise(latents.shape, device=self.device, dtype=self.dtype)
-    input_perturbation = self.config.extra_training.input_perturbation
-    if input_perturbation > 0:
-        new_noise = noise + input_perturbation * randn_like(noise)
+    input_pertubation = self.config.extra_training.input_pertubation
+    if input_pertubation > 0:
+        new_noise = noise + input_pertubation * randn_like(noise)
         noisy_latents = add_noise_to_latents(latents=latents, noise=new_noise, solver=self.solver, timesteps=timesteps)
     else:
         noisy_latents = add_noise_to_latents(latents=latents, noise=noise, solver=self.solver, timesteps=timesteps)

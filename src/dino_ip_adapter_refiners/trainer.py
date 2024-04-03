@@ -187,8 +187,6 @@ class BaseTrainer(
             image_embedding = image_encoder(cond_image)
             image_embedding = self.image_proj(image_embedding)
             negative_image_embedding = self.black_image_embedding
-            print(image_embedding.shape, negative_image_embedding.shape)
-            print(image_embedding.dtype, negative_image_embedding.dtype)
 
             image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
@@ -267,6 +265,11 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
         else:
             assert isinstance(text_embeddings, Tensor)
             image_embeddings[i], text_embeddings[i] = self.drop_latents(image_embeddings[i], text_embeddings[i])
+    print(image_embeddings.shape)
+    print(text_embeddings.shape)
+    print(latents.shape)
+
+
     self.ip_adapter.set_image_context(image_embeddings)
     if not only_image:
         self.unet.set_clip_text_embedding(clip_text_embedding=text_embeddings)

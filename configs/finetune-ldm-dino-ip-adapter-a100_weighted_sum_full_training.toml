@@ -69,7 +69,7 @@ cache_limit = "100gb"
 is_mosaic = true
 is_webdataset = false
 only_image = true
-dataset_workers = 4
+dataset_workers = 0
 
 [save_adapter]
 checkpoint_steps = 1000

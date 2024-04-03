@@ -267,13 +267,13 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
     if not only_image:
         text_embeddings = batch.text_embedding
     batch_size = latents.shape[0]
+    image_embeddings = self.image_proj(image_embeddings)
     for i in range(batch_size):
         if only_image:
             image_embeddings[i] = self.drop_image_latents(image_embeddings[i])
         else:
             assert isinstance(text_embeddings, Tensor)
             image_embeddings[i], text_embeddings[i] = self.drop_latents(image_embeddings[i], text_embeddings[i])
-    image_embeddings = self.image_proj(image_embeddings)
     self.ip_adapter.set_image_context(image_embeddings)
     if not only_image:
         self.unet.set_clip_text_embedding(clip_text_embedding=text_embeddings)

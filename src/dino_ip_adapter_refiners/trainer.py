@@ -265,8 +265,6 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
         else:
             assert isinstance(text_embeddings, Tensor)
             image_embeddings[i], text_embeddings[i] = self.drop_latents(image_embeddings[i], text_embeddings[i])
-    print(image_embeddings.shape)
-    print(latents.shape)
 
 
     self.ip_adapter.set_image_context(image_embeddings)
@@ -301,11 +299,13 @@ class Trainer(
     BaseTrainer[Batch]
 ):
     def compute_loss(self, batch: Batch) -> torch.Tensor:
+        assert not self.config.dataset.only_image
         return compute_loss(self, batch, only_image=False)
 
 class TrainerOnlyImage(
     BaseTrainer[BatchOnlyImage]
 ):
     def compute_loss(self, batch: BatchOnlyImage) -> torch.Tensor:
+        assert self.config.dataset.only_image
         return compute_loss(self, batch, only_image=True)
 

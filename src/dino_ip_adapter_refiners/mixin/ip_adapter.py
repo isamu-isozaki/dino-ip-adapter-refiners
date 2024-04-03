@@ -371,6 +371,7 @@ class IPAdapterMixin(
         ip_adapter = DinoIPAdapter(
             target=self.unet,
             image_proj=self.image_proj,
+            only_image=self.config.dataset.only_image
         ).inject()
         ip_adapter.enable_gradients(True)
         ip_adapter.initialize_weights(config.initializer_range)

@@ -148,8 +148,6 @@ class BaseTrainer(
         image_encoder.load_from_safetensors(self.config.extra_training.image_encoder_checkpoint)
         image_encoder.pop()
         image_encoder.layer((-1), fl.Chain).pop()
-        unpopped_image_encoder = DINOv2_large_reg(self.device, self.dtype)
-        unpopped_image_encoder.load_from_safetensors(self.config.extra_training.image_encoder_checkpoint)
 
         # initialize an SD1.5 pipeline using the trainer's models
         pipeline_dtype = None if self.config.extra_training.automatic_mixed_precision else self.dtype
@@ -198,7 +196,6 @@ class BaseTrainer(
             )[None]
             image_embedding = image_encoder(cond_image)
             print(image_embedding.shape)
-            print(unpopped_image_encoder(cond_image).shape)
             image_embedding = self.image_proj(image_embedding)
             print(image_embedding.shape)
             print(clip_text_embedding.shape)

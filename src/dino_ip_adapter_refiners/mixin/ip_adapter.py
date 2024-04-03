@@ -270,13 +270,13 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
 
         self._image_proj = [
             image_proj if image_proj is not None else PerceiverResampler(
-                latents_dim=1024,
-                num_attention_layers=8,
-                num_attention_heads=24,
+                latents_dim=768,
+                num_attention_layers=4,
+                num_attention_heads=12,
                 head_dim=64,
-                num_tokens=128,
+                num_tokens=16,
                 input_dim=1024,
-                output_dim=1024,
+                output_dim=768,
                 device=target.device,
                 dtype=target.dtype,
             )

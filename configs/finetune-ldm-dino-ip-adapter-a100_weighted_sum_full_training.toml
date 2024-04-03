@@ -17,8 +17,6 @@ requires_grad = false
 
 [image_proj]
 
-[unconditional_image_embedding]
-
 [ip_adapter]
 image_encoder_type = "dinov2_vitl14_reg4"
 resolution = 518

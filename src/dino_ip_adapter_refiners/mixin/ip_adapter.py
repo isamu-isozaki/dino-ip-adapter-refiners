@@ -210,7 +210,7 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
             query_matrix = distribute.layer((0), fl.Linear)
             self._key_matrix = [
                 fl.Linear(
-                    in_features=1024,
+                    in_features=768,
                     out_features=query_matrix.out_features,
                     device=target.device,
                     dtype=target.dtype,
@@ -218,7 +218,7 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
             ]
             self._value_matrix = [
                 fl.Linear(
-                    in_features=1024,
+                    in_features=768,
                     out_features=query_matrix.out_features,
                     device=target.device,
                     dtype=target.dtype,

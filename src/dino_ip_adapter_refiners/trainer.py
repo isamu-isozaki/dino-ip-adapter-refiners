@@ -170,7 +170,7 @@ class BaseTrainer(
             clip_text_embedding = cat(tensors=(negative_embedding, conditional_embedding), dim=0)
 
             cond_resolution = self.config.ip_adapter.resolution
-            cond_image = image_to_tensor(cond_image)
+            cond_image = image_to_tensor(cond_image).to(self.device, dtype=self.dtype)
             cond_image = TF.resize(
                 cond_image,
                 size=cond_resolution,

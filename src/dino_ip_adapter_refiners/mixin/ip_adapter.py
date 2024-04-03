@@ -259,7 +259,7 @@ class UncondImageEmbedding(fl.Module):
     def __init__(self):
         super().__init__()
         self.uncond_token = nn.Parameter(
-                torch.randn(1, 128, 1024)
+                torch.randn(1, 16, 768)
             )
 
 

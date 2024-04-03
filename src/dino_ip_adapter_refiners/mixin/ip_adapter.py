@@ -255,16 +255,9 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
         self.key_matrix.weight.requires_grad_(enable)
         self.value_matrix.weight.requires_grad_(enable)
 
-class UncondImageEmbedding(fl.Module):
-    def __init__(self):
-        super().__init__()
-        self.uncond_token = nn.Parameter(
-                torch.randn(1, 16, 768)
-            )
-
 
 class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, uncond_image_embedding: UncondImageEmbedding | None = None,  use_timestep_embedding: bool = False, use_uncond_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None) -> None:
+    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
 
@@ -281,11 +274,11 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                 dtype=target.dtype,
             )
         ]
-        self.use_uncond_image_embedding = use_uncond_image_embedding
-        if use_uncond_image_embedding:
-            self._unconditional_image_embedding = [
-                uncond_image_embedding if uncond_image_embedding is not None else UncondImageEmbedding()
-            ]
+        self.use_unconditional_image_embedding = use_unconditional_image_embedding
+        if use_unconditional_image_embedding:
+            self.unconditional_image_embedding = unconditional_image_embedding if unconditional_image_embedding is not None else nn.Parameter(
+                torch.randn(1, 16, 768)
+            )
         if only_image:
             self.sub_adapters = [
                 CrossAttentionAdapterOnlyImage(cross_attn)
@@ -312,16 +305,12 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                         continue
                     cross_attention_weights[k[len(prefix):]] = v
                 cross_attn.load_state_dict(cross_attention_weights, strict=False)
-            if use_uncond_image_embedding:
-                self._unconditional_image_embedding[0].uncond_token = weights["uncond_image_embedding"]
+            if use_unconditional_image_embedding:
+                self.unconditional_image_embedding = weights["unconditional_image_embedding"]
 
     @property
     def image_proj(self) -> PerceiverResampler:
         return self._image_proj[0]
-
-    @property
-    def unconditional_image_embedding(self) -> torch.Tensor:
-        return self._unconditional_image_embedding[0].uncond_token
 
     def inject(self, parent: fl.Chain | None = None):
         for sub_adapter in self.sub_adapters:
@@ -376,18 +365,12 @@ class IPAdapterMixin(
         for module in image_proj.modules():
             _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
         return image_proj
-    @register_model()
-    def uncond_image_embedding(self, config: ModelConfig) -> UncondImageEmbedding:
-        token = UncondImageEmbedding()
-        token.requires_grad_(True)
-        return token
 
     @register_model()
     def ip_adapter(self, config: IPAdapterConfig) -> DinoIPAdapter:
         ip_adapter = DinoIPAdapter(
             target=self.unet,
             image_proj=self.image_proj,
-            uncond_image_embedding=self.uncond_image_embedding
         ).inject()
         ip_adapter.enable_gradients(True)
         ip_adapter.initialize_weights(config.initializer_range)

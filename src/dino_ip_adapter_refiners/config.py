@@ -28,7 +28,7 @@ class IPAdapterConfig(ModelConfig):
     timestep_bias_begin: int = 0
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
-    use_uncond_image_embedding: bool = True
+    use_unconditional_image_embedding: bool = True
 
 class IPTrainingConfig(TrainingConfig):
     automatic_mixed_precision: bool = (
@@ -88,6 +88,6 @@ class Config(BaseConfig):
     # image_encoder: ModelConfig
     # image proj has to be after image encoder or it fails
     image_proj: ModelConfig
-    uncond_image_embedding: ModelConfig
+    unconditional_image_embedding: ModelConfig
     # adapter needs to be initialized later for this to work
     ip_adapter: IPAdapterConfig

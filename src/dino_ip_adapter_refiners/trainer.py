@@ -67,11 +67,6 @@ class ComputeGradNormCallback(Callback["BaseTrainer"]):
                     grads = param.grad.detach().data
                     grad_norm = (grads.norm(p=2) / grads.numel()).item()
                     trainer.wandb_log(data={"grad_norm/" + name: grad_norm})
-            for name, param in trainer.uncond_image_embedding.named_parameters():
-                if param.grad is not None:
-                    grads = param.grad.detach().data
-                    grad_norm = (grads.norm(p=2) / grads.numel()).item()
-                    trainer.wandb_log(data={"grad_norm/" + name: grad_norm})
         return super().on_backward_end(trainer)
 
 
@@ -90,11 +85,6 @@ class ComputeParamNormCallback(Callback["BaseTrainer"]):
                     data = param.data.detach()
                     data_norm = (data.norm(p=2) / data.numel()).item()
                     trainer.wandb_log(data={"param_norm/" + name: data_norm})
-            for name, param in trainer.uncond_image_embedding.named_parameters():
-                if param.grad is not None:
-                    data = param.data.detach()
-                    data_norm = (data.norm(p=2) / data.numel()).item()
-                    trainer.wandb_log(data={"param_norm/" + name: data_norm})
         return super().on_backward_end(trainer)
 
 
@@ -108,17 +98,17 @@ class SaveAdapterCallback(Callback["BaseTrainer"]):
             os.makedirs(trainer.config.save_adapter.save_folder, exist_ok=True)
             cross_attention_adapters = trainer.ip_adapter.sub_adapters
             image_proj = trainer.ip_adapter.image_proj
-            uncond_image_embedding = None
-            if trainer.ip_adapter.use_uncond_image_embedding:
-                uncond_image_embedding = trainer.ip_adapter.unconditional_image_embedding
+            unconditional_image_embedding = None
+            if trainer.ip_adapter.use_unconditional_image_embedding:
+                unconditional_image_embedding = trainer.ip_adapter.unconditional_image_embedding
 
             tensors: dict[str, Tensor] = {}
             tensors |= {f"image_proj.{key}": value for key, value in image_proj.state_dict().items()}
             for i, cross_attention_adapter in enumerate(cross_attention_adapters):
                 tensors |= {f"ip_adapter.{i:03d}.{key}": value for key, value in cross_attention_adapter.state_dict().items()}
-            if trainer.ip_adapter.use_uncond_image_embedding:
-                assert isinstance(uncond_image_embedding, Tensor)
-                tensors |= {f"uncond_image_embedding": uncond_image_embedding}
+            if trainer.ip_adapter.use_unconditional_image_embedding:
+                assert isinstance(unconditional_image_embedding, Tensor)
+                tensors |= {f"unconditional_image_embedding": unconditional_image_embedding}
             save_to_safetensors(
                 path= f"{trainer.config.save_adapter.save_folder}/step{trainer.clock.iteration}.safetensors",
                 tensors=tensors,
@@ -229,7 +219,7 @@ class BaseTrainer(
         return output
     @cached_property
     def black_image_embedding(self) -> Tensor:
-        if self.config.ip_adapter.use_uncond_image_embedding:
+        if self.config.ip_adapter.use_unconditional_image_embedding:
             return self.ip_adapter.unconditional_image_embedding
         cond_resolution = self.config.ip_adapter.resolution
         image_encoder = DINOv2_large_reg(self.device, self.dtype)

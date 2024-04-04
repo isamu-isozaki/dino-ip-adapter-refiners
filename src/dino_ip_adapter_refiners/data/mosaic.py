@@ -30,7 +30,7 @@ class MosaicAdapter(BaseDataAdapter):
                 dino_embedding=dino_embedding.unsqueeze(0),
             )
         else:
-            assert item.text_embedding is not None
+            assert "clipl.pth" in item
             text_embedding = torch.tensor(item["clipl.pth"])
             return Batch(
                 latent=latent.unsqueeze(0),

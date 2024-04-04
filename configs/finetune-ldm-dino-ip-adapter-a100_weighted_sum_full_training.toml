@@ -63,11 +63,14 @@ text_drop_rate = 0.05
 text_and_image_drop_rate = 0.05
 cache_dir = "/home/isamu/tmp"
 shuffle = true
-cache_limit = "100gb"
+cache_limit = "150gb"
 is_mosaic = true
 is_webdataset = false
 only_image = false
 dataset_workers = 0
+predownload = 15000
+download_retry = 2
+download_timeout = 120
 
 [save_adapter]
 checkpoint_steps = 1000

@@ -5,7 +5,7 @@ from streaming import StreamingDataset  # type: ignore
 from dino_ip_adapter_refiners.data.utils import BatchOnlyImage, Batch, BaseDataAdapter
 
 class MosaicAdapter(BaseDataAdapter):
-    def __init__(self, train_shards_path_or_url: str, cache_dir: str, shuffle: bool = True, cache_limit: str = '100gb', only_image: bool = False, batch_size: int = 1, predownload: int = 1000, download_retry: int = 2, download_timeout: float = 120):
+    def __init__(self, train_shards_path_or_url: str, cache_dir: str, shuffle: bool = True, cache_limit: str = '100gb', only_image: bool = False, batch_size: int = 1, predownload: int = 15000, download_retry: int = 2, download_timeout: float = 120):
         super().__init__(only_image=only_image)
         self.train_shards_path_or_url = train_shards_path_or_url
         self.cache_dir = cache_dir

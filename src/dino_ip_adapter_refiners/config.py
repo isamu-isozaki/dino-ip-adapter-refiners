@@ -62,7 +62,9 @@ class DatasetConfig(BaseModel):
     only_image: bool = False
     dataset_length: int = 567597
     dataset_workers: int = 4
-
+    predownload: int = 1000
+    download_retry: int = 2
+    download_timeout: float = 120
 
 class TestIPDiffusionConfig(TestDiffusionConfig):
     """Configuration to test the diffusion model, during the `evaluation` loop of the trainer."""

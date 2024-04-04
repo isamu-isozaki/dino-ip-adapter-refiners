@@ -7,11 +7,15 @@ project = "finetune-ldm-ip-adapter"
 automatic_mixed_precision = true
 unet_checkpoint = "checkpoints/unet.safetensors"
 text_encoder_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
-lda_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
+lda_checkpoint = "checkpoints/lda.safetensors"
 image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
+input_pertubation = 0.0
+loss_scaler="legacy"
 
 [unet]
 requires_grad = false
+
+[image_proj]
 
 [ip_adapter]
 image_encoder_type = "dinov2_vitl14_reg4"
@@ -24,6 +28,7 @@ initialize_model = true
 initializer_range = 0.02
 use_rescaler = true
 weighted_sum = true
+use_unconditional_image_embedding = true
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}
@@ -58,11 +63,14 @@ text_drop_rate = 0.05
 text_and_image_drop_rate = 0.05
 cache_dir = "/home/isamu/tmp"
 shuffle = true
-cache_limit = "100gb"
+cache_limit = "150gb"
 is_mosaic = true
 is_webdataset = false
-only_image = true
-dataset_workers = 4
+only_image = false
+dataset_workers = 0
+predownload = 15000
+download_retry = 2
+download_timeout = 120
 
 [save_adapter]
 checkpoint_steps = 1000
@@ -78,10 +86,10 @@ prompts = [
     "Pink flamingo playing soccer"
 ]
 validation_image_paths = [
-    "tests/weights/frida.jpg",
-    "tests/weights/cute_cats.jpg",
-    "tests/weights/ferret.jpg",
-    "tests/weights/pink_flamingo.jpg"
+    "checkpoints/frida.jpg",
+    "checkpoints/cute_cats.jpg",
+    "checkpoints/ferret.jpg",
+    "checkpoints/pink_flamingo.jpg"
 ]
 [compute_grad_norms]
 

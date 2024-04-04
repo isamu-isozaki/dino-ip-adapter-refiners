@@ -3,10 +3,14 @@ from refiners.training_utils import Trainer as AbstractTrainer
 from dino_ip_adapter_refiners.config import Config
 
 from typing import Any, Callable
-from torch import float32
+from torch import float32, Tensor
 from refiners.training_utils.trainer import ModelConfigT, ModuleT, ModelItem
 from refiners.fluxion import layers as fl
 from functools import wraps
+import PIL
+from PIL import Image
+import numpy as np
+import torch
 def register_model():
     def decorator(func: Callable[[Any, ModelConfigT], ModuleT]) -> ModuleT:
         @wraps(func)

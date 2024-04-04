@@ -12,7 +12,7 @@ class DataMixin(
     BaseMixin[BatchT]
 ):
     def __init__(self, config: Config):
-        self.dataset_adapter = DatasetAdapter(config.dataset)
+        self.dataset_adapter = DatasetAdapter(config.dataset, config.training.batch_size)
         super().__init__(config)
     @property
     def solver(self) -> DDPM:

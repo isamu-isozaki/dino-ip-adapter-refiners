@@ -293,7 +293,7 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
         scaler=self.config.extra_training.loss_scaler,
         solver=self.solver,
     )
-
+    print(rescaled_loss)
     return rescaled_loss.mean()
 class Trainer(
     BaseTrainer[Batch]

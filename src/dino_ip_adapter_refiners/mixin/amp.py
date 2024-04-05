@@ -37,10 +37,6 @@ class AMPMixin(
         """Backward pass on the loss."""
         self._call_callbacks(event_name="on_backward_begin")
         scaled_loss = self.loss / self.clock.num_step_per_iteration
-        for item in self.models.values():
-            for name, param in item.model.named_parameters():
-                if param.grad is not None:
-                    print(name)
         self.backward_step(scaled_loss)
         self._call_callbacks(event_name="on_backward_end")
         if self.clock.is_optimizer_step:

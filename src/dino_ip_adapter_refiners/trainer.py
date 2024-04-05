@@ -27,7 +27,7 @@ from refiners.fluxion import layers as fl
 import torchvision.transforms.functional as TF
 from refiners.fluxion.utils import normalize
 from torchvision.transforms import InterpolationMode
-
+from refiners.fluxion.utils import no_grad
 import random
 from refiners.foundationals.dinov2 import (
     DINOv2_small,
@@ -212,13 +212,16 @@ class BaseTrainer(
         del lda
         del image_encoder
     @cached_property
+    @no_grad()
     def empty_text_embedding(self) -> Tensor:
         text_encoder = CLIPTextEncoderL(self.device, self.dtype)
         text_encoder.load_from_safetensors(self.config.extra_training.text_encoder_checkpoint)
         output = text_encoder("").float().cpu()
+        output.requires_grad_(False)
         del text_encoder
         return output
     @cached_property
+    @no_grad()
     def black_image_embedding(self) -> Tensor:
         if self.config.ip_adapter.use_unconditional_image_embedding:
             return self.ip_adapter.unconditional_image_embedding
@@ -228,6 +231,7 @@ class BaseTrainer(
         image_encoder.pop()
         image_encoder.layer((-1), fl.Chain).pop()
         output = image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)).float().cpu()
+        output.requires_grad_(False)
         del image_encoder
         return output
     def drop_latents(self, image_embedding: Tensor, text_embedding: Tensor) -> tuple[Tensor, Tensor]:
@@ -293,8 +297,6 @@ def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = Fa
         scaler=self.config.extra_training.loss_scaler,
         solver=self.solver,
     )
-    print(rescaled_loss.shape)
-    print(rescaled_loss.mean())
 
     return rescaled_loss.mean()
 class Trainer(

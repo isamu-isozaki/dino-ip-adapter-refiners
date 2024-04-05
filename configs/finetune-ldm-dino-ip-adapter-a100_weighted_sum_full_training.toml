@@ -33,7 +33,7 @@ use_unconditional_image_embedding = true
 [training]
 duration = {"number" = 100000000, "unit" = "step"}
 seed = 9752
-batch_size = 32
+batch_size = 24
 gradient_accumulation = {"number" = 16, "unit" = "step"}
 evaluation_interval = {"number" = 500, "unit" = "step"}
 evaluation_seed = 9752

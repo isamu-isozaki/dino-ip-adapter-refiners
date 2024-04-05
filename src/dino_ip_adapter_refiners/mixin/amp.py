@@ -42,6 +42,7 @@ class AMPMixin(
         self._call_callbacks(event_name="on_backward_end")
         if self.clock.is_optimizer_step:
             self._call_callbacks(event_name="on_optimizer_step_begin")
+            print("Optimizer step")
             self.optimizer_step()
             self.optimizer.zero_grad()
             self._call_callbacks(event_name="on_optimizer_step_end")

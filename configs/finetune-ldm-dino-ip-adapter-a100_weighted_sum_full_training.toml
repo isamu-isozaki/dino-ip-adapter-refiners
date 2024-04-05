@@ -68,7 +68,6 @@ is_mosaic = true
 is_webdataset = false
 only_image = false
 dataset_workers = 0
-predownload = 15000
 download_retry = 2
 download_timeout = 120
 

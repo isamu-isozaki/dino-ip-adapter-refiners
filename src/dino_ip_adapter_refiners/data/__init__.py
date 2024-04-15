@@ -16,6 +16,4 @@ class DataLoaderAdapter:
         else:
             raise Exception("is_mosaic or is_webdataset must be true for the dataset")
         self.dataset_length = self.dataset.dataset_length
-    @cached_property
-    def dataloader(self) -> DataLoader[Any]:
-        return self.dataset.dataloader
+        self.dataloader = self.dataset.dataloader

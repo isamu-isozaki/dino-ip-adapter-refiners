@@ -25,12 +25,12 @@ class MosaicAdapter(BaseDataAdapter):
     def dataset(self) -> StreamingDataset:
         return StreamingDataset(remote=self.train_shards_path_or_url, local=self.cache_dir, shuffle=self.shuffle, cache_limit=self.cache_limit, predownload=self.predownload, batch_size=self.batch_size, download_retry=self.download_retry, download_timeout=self.download_timeout, validate_hash=None, keep_zip=False)
     def collate_fn_from_numpy(self, batch: list[dict]) -> BatchOnlyImage | Batch:
-        latents = cat(tensors=[tensor(item["latent"][None]) for item in batch])
-        dino_embeddings = cat([tensor(item["dino_embedding"][None]) for item in batch])
+        latents = cat(tensors=[tensor(item["sd15_lda.pth"][None]) for item in batch])
+        dino_embeddings = cat([tensor(item["dinov2_vitl14_reg4_pretrain.pth"][None]) for item in batch])
         if self.only_image:
             return BatchOnlyImage(latent=latents, dino_embedding=dino_embeddings)
         else:
-            text_embeddings = cat(tensors=[tensor(item["text_embedding"][None]) for item in batch])
+            text_embeddings = cat(tensors=[tensor(item["clipl.pth"][None]) for item in batch])
             return Batch(latent=latents, dino_embedding=dino_embeddings, text_embedding=text_embeddings)
     def get_item(self, index: int) -> BatchOnlyImage | Batch:
         item = self.dataset[index]

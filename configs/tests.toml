@@ -31,7 +31,7 @@ weighted_sum = true
 use_unconditional_image_embedding = true
 
 [training]
-duration = {"number" = 1000, "unit" = "step"}
+duration = {"number" = 100, "unit" = "step"}
 seed = 9752
 batch_size = 32
 gradient_accumulation = {"number" = 1, "unit" = "step"}
@@ -67,10 +67,10 @@ cache_limit = "150gb"
 is_mosaic = true
 is_webdataset = false
 only_image = false
-dataset_workers = 0
+dataset_workers = 4
 predownload = 15000
 download_retry = 2
-download_timeout = 120
+download_timeout = 5
 
 [save_adapter]
 checkpoint_steps = 1000

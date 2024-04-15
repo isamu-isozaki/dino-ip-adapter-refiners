@@ -3,19 +3,23 @@ import torch
 from streaming import StreamingDataset  # type: ignore
 
 from dino_ip_adapter_refiners.data.utils import BatchOnlyImage, Batch, BaseDataAdapter
+from dino_ip_adapter_refiners.config import DatasetConfig
+from torch.utils.data import DataLoader
+from typing import Any
 
 class MosaicAdapter(BaseDataAdapter):
-    def __init__(self, train_shards_path_or_url: str, cache_dir: str, shuffle: bool = True, cache_limit: str = '100gb', only_image: bool = False, batch_size: int = 1, predownload: int = 15000, download_retry: int = 2, download_timeout: float = 120):
-        super().__init__(only_image=only_image)
-        self.train_shards_path_or_url = train_shards_path_or_url
-        self.cache_dir = cache_dir
-        self.shuffle = shuffle
-        self.cache_limit = cache_limit
-        self.only_image = only_image
+    def __init__(self, config: DatasetConfig, batch_size: int =1):
+        super().__init__(only_image=config.only_image)
+        self.config = config
+        self.train_shards_path_or_url = config.train_shards_path_or_url
+        self.cache_dir = config.cache_dir
+        self.shuffle = config.shuffle
+        self.cache_limit = config.cache_limit
+        self.only_image = config.only_image
         self.batch_size = batch_size
-        self.predownload = predownload
-        self.download_retry = download_retry
-        self.download_timeout = download_timeout
+        self.predownload = config.predownload
+        self.download_retry = config.download_retry
+        self.download_timeout = config.download_timeout
         self.dataset_length = len(self.dataset)
     @cached_property
     def dataset(self) -> StreamingDataset:
@@ -37,3 +41,8 @@ class MosaicAdapter(BaseDataAdapter):
                 dino_embedding=dino_embedding.unsqueeze(0),
                 text_embedding=text_embedding.unsqueeze(0)
             )
+    @cached_property
+    def dataloader(self) -> DataLoader[Any]:
+        return DataLoader(
+            dataset=self.dataset, batch_size=self.batch_size, num_workers=self.config.dataset_workers, shuffle=True, collate_fn=self.collate_fn
+        )

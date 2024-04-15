@@ -65,6 +65,7 @@ class DatasetConfig(BaseModel):
     predownload: int = 1000
     download_retry: int = 2
     download_timeout: float = 120
+    shuffle_buffer_size: int = 1000
 
 class TestIPDiffusionConfig(TestDiffusionConfig):
     """Configuration to test the diffusion model, during the `evaluation` loop of the trainer."""

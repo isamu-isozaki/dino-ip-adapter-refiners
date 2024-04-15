@@ -3,6 +3,7 @@ from dino_ip_adapter_refiners.config import Config
 from dino_ip_adapter_refiners.data import BatchOnlyImage, Batch
 from typing import TypeVar, Generic
 from refiners.training_utils.wandb import WandbMixin
+from refiners.foundationals.latent_diffusion.solvers import DDPM
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
 
@@ -11,4 +12,6 @@ class BaseMixin(
     AbstractTrainer[Config, BatchT],
     WandbMixin
 ):
-    pass
+    @property
+    def solver(self) -> DDPM:
+        return DDPM(1000, device=self.device)

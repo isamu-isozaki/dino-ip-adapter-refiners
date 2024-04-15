@@ -71,6 +71,7 @@ dataset_workers = 0
 predownload = 15000
 download_retry = 2
 download_timeout = 5
+shuffle_buffer_size = 1000
 
 [save_adapter]
 checkpoint_steps = 1000

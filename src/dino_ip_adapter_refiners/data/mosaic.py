@@ -6,7 +6,7 @@ from dino_ip_adapter_refiners.data.utils import BatchOnlyImage, Batch, BaseDataA
 from dino_ip_adapter_refiners.config import DatasetConfig
 from torch.utils.data import DataLoader
 from typing import Any
-
+from torch import cat, tensor
 class MosaicAdapter(BaseDataAdapter):
     def __init__(self, config: DatasetConfig, batch_size: int =1):
         super().__init__(only_image=config.only_image)
@@ -24,6 +24,14 @@ class MosaicAdapter(BaseDataAdapter):
     @cached_property
     def dataset(self) -> StreamingDataset:
         return StreamingDataset(remote=self.train_shards_path_or_url, local=self.cache_dir, shuffle=self.shuffle, cache_limit=self.cache_limit, predownload=self.predownload, batch_size=self.batch_size, download_retry=self.download_retry, download_timeout=self.download_timeout, validate_hash=None, keep_zip=False)
+    def collate_fn_from_numpy(self, batch: list[dict]) -> BatchOnlyImage | Batch:
+        latents = cat(tensors=[tensor(item["latent"][None]) for item in batch])
+        dino_embeddings = cat([tensor(item["dino_embedding"][None]) for item in batch])
+        if self.only_image:
+            return BatchOnlyImage(latent=latents, dino_embedding=dino_embeddings)
+        else:
+            text_embeddings = cat(tensors=[tensor(item["text_embedding"][None]) for item in batch])
+            return Batch(latent=latents, dino_embedding=dino_embeddings, text_embedding=text_embeddings)
     def get_item(self, index: int) -> BatchOnlyImage | Batch:
         item = self.dataset[index]
         dino_embedding = torch.tensor(item["dinov2_vitl14_reg4_pretrain.pth"])
@@ -44,5 +52,5 @@ class MosaicAdapter(BaseDataAdapter):
     @cached_property
     def dataloader(self) -> DataLoader[Any]:
         return DataLoader(
-            dataset=self.dataset, batch_size=self.batch_size, num_workers=self.config.dataset_workers, shuffle=True, collate_fn=self.collate_fn
+            dataset=self.dataset, batch_size=self.batch_size, num_workers=self.config.dataset_workers, collate_fn=self.collate_fn_from_numpy
         )

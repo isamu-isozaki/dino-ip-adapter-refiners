@@ -52,5 +52,5 @@ class MosaicAdapter(BaseDataAdapter):
     @cached_property
     def dataloader(self) -> DataLoader[Any]:
         return DataLoader(
-            dataset=self.dataset, batch_size=self.batch_size, num_workers=self.config.dataset_workers, collate_fn=self.collate_fn_from_numpy
+            dataset=self.dataset, batch_size=self.batch_size, num_workers=self.config.dataset_workers, collate_fn=self.collate_fn_from_numpy, persistent_workers=True
         )

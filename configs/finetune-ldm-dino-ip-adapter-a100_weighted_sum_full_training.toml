@@ -73,7 +73,7 @@ download_retry = 2
 download_timeout = 5
 
 [save_adapter]
-checkpoint_steps = 1000
+checkpoint_steps = 1
 save_folder = "/home/isamu/checkpoints/test"
 
 [test_ldm]

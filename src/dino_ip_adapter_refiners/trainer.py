@@ -49,6 +49,7 @@ from torch import (
     cat,
     randn,
 )
+import gc
 from loguru import logger
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
@@ -211,6 +212,8 @@ class BaseTrainer(
         del text_encoder
         del lda
         del image_encoder
+        torch.cuda.empty_cache()
+        gc.collect()
     @cached_property
     @no_grad()
     def empty_text_embedding(self) -> Tensor:

@@ -35,7 +35,7 @@ duration = {"number" = 100000000, "unit" = "step"}
 seed = 9752
 batch_size = 32
 gradient_accumulation = {"number" = 1, "unit" = "step"}
-evaluation_interval = {"number" = 1, "unit" = "step"}
+evaluation_interval = {"number" = 1000, "unit" = "step"}
 evaluation_seed = 9752
 dtype = "bfloat16"
 device="cuda"
@@ -73,7 +73,7 @@ download_retry = 2
 download_timeout = 5
 
 [save_adapter]
-checkpoint_steps = 1
+checkpoint_steps = 10000
 save_folder = "/home/isamu/checkpoints/test"
 
 [test_ldm]

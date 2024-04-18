@@ -121,7 +121,7 @@ class Uploads:
     because writes are not thread safe and can corrupt the archive.
     """
 
-    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="", encode_prompt=False):
+    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="zstd", encode_prompt=False):
         self.open_lock = Lock()
         self.uploads = OrderedDict()
         self.skip_upload = skip_upload
@@ -388,7 +388,7 @@ def main():
     parser.add_argument(
         "--compression",
         type=str,
-        default=""
+        default="zstd"
     )
 
     args = parser.parse_args()

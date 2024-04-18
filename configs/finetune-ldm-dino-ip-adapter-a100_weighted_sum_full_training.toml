@@ -27,7 +27,7 @@ fine_grained = true
 initialize_model = true
 initializer_range = 0.02
 use_rescaler = true
-weighted_sum = true
+weighted_sum = false
 use_unconditional_image_embedding = true
 
 [training]
@@ -74,7 +74,7 @@ download_timeout = 5
 
 [save_adapter]
 checkpoint_steps = 10000
-save_folder = "/home/isamu/checkpoints/test"
+save_folder = "/home/isamu/checkpoints/test_no_weighted"
 
 [test_ldm]
 num_inference_steps = 30

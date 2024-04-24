@@ -162,8 +162,9 @@ class BaseTrainer(
         # for each prompt generate `num_images_per_prompt` images
         # TODO: remove this for loop, batch things up
         images: dict[str, WandbLoggable] = {}
-        for i in range(len(cond_images)):
-            images[f"condition images_{i}"] = cond_images[i]
+        if self.clock.step == 0:
+            for i in range(len(cond_images)):
+                images[f"condition images_{i}"] = cond_images[i]
         for prompt, cond_image in zip(prompts, cond_images):
             canvas_image = Image.new(mode="RGB", size=(512, 512 * num_images_per_prompt))
             conditional_embedding = text_encoder(prompt)

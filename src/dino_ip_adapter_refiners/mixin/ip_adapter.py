@@ -307,7 +307,7 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                     cross_attention_weights[k[len(prefix):]] = v
                 cross_attn.load_state_dict(cross_attention_weights, strict=False)
             if use_unconditional_image_embedding:
-                self.unconditional_image_embedding = weights["unconditional_image_embedding"]
+                self.unconditional_image_embedding = weights["unconditional_image_embedding"].float()
 
     @property
     def image_proj(self) -> PerceiverResampler:
@@ -377,9 +377,9 @@ class IPAdapterMixin(
             if self.config.extra_training.ip_adapter_checkpoint is not None
             else None
         ).inject()
-        ip_adapter.enable_gradients(True)
         if self.config.extra_training.ip_adapter_checkpoint is None:
             ip_adapter.initialize_weights(config.initializer_range)
+        ip_adapter.enable_gradients(True)
         return ip_adapter
 
 

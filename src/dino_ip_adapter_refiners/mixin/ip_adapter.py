@@ -291,23 +291,24 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
                  for cross_attn in filter(lambda attn: type(attn) != fl.SelfAttention, target.layers(fl.Attention))
             ]
         if weights is not None:
-            image_proj_state_dict: dict[str, Tensor] = {
-                k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
-            }
+            with torch.no_grad():
+                image_proj_state_dict: dict[str, Tensor] = {
+                    k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
+                }
 
-            self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
+                self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
 
 
-            for i, cross_attn in enumerate(self.sub_adapters):
-                cross_attention_weights: dict[str, Tensor] = {}
-                for k, v in weights.items():
-                    prefix = f"ip_adapter.{i:03d}."
-                    if not k.startswith(prefix):
-                        continue
-                    cross_attention_weights[k[len(prefix):]] = v
-                cross_attn.load_state_dict(cross_attention_weights, strict=False)
-            if use_unconditional_image_embedding:
-                self.unconditional_image_embedding.copy_(weights["unconditional_image_embedding"].float())
+                for i, cross_attn in enumerate(self.sub_adapters):
+                    cross_attention_weights: dict[str, Tensor] = {}
+                    for k, v in weights.items():
+                        prefix = f"ip_adapter.{i:03d}."
+                        if not k.startswith(prefix):
+                            continue
+                        cross_attention_weights[k[len(prefix):]] = v
+                    cross_attn.load_state_dict(cross_attention_weights, strict=False)
+                if use_unconditional_image_embedding:
+                    self.unconditional_image_embedding.copy_(weights["unconditional_image_embedding"].float())
 
     @property
     def image_proj(self) -> PerceiverResampler:

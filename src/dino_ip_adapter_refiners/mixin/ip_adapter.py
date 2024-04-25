@@ -18,6 +18,7 @@ from refiners.training_utils import ModelConfig
 from refiners.foundationals.latent_diffusion import SD1UNet
 from refiners.fluxion.layers.attentions import ScaledDotProductAttention
 from jaxtyping import Float
+from refiners.fluxion.utils import load_from_safetensors
 
 # Adapted from https://github.com/huggingface/open-muse
 def _init_learnable_weights(module: Module, initializer_range: float):
@@ -371,10 +372,14 @@ class IPAdapterMixin(
         ip_adapter = DinoIPAdapter(
             target=self.unet,
             image_proj=self.image_proj,
-            only_image=self.config.dataset.only_image
+            only_image=self.config.dataset.only_image,
+            weights=load_from_safetensors(self.config.extra_training.ip_adapter_checkpoint)
+            if self.config.extra_training.ip_adapter_checkpoint is not None
+            else None
         ).inject()
         ip_adapter.enable_gradients(True)
-        ip_adapter.initialize_weights(config.initializer_range)
+        if self.config.extra_training.ip_adapter_checkpoint is None:
+            ip_adapter.initialize_weights(config.initializer_range)
         return ip_adapter
 
 

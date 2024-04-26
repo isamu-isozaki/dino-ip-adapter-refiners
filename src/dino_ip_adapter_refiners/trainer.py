@@ -1,3 +1,4 @@
+import torch
 from torch import Tensor, zeros, float32, randn_like
 from torch.nn import functional as F
 from dino_ip_adapter_refiners.diffusion_utils import (
@@ -223,7 +224,7 @@ class BaseTrainer(
         output.requires_grad_(False)
         del text_encoder
         return output
-    @cached_property()
+    @cached_property
     @no_grad()
     def black_dino_image_embedding(self) -> Tensor:
         cond_resolution = self.config.ip_adapter.resolution

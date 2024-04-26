@@ -9,7 +9,6 @@ unet_checkpoint = "checkpoints/unet.safetensors"
 text_encoder_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
 lda_checkpoint = "checkpoints/lda.safetensors"
 image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
-ip_adapter_checkpoint = "/home/isamu/checkpoints/test_no_weighted/step30000.safetensors"
 input_pertubation = 0.0
 loss_scaler="legacy"
 
@@ -29,7 +28,7 @@ initialize_model = true
 initializer_range = 0.02
 use_rescaler = true
 weighted_sum = false
-use_unconditional_image_embedding = true
+use_unconditional_image_embedding = false
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}
@@ -75,7 +74,7 @@ download_timeout = 5
 
 [save_adapter]
 checkpoint_steps = 10000
-save_folder = "/home/isamu/checkpoints/test_no_weighted"
+save_folder = "/home/isamu/checkpoints/test_no_weighted_no_uncond"
 
 [test_ldm]
 num_inference_steps = 30

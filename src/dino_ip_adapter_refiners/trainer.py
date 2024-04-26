@@ -237,7 +237,7 @@ class BaseTrainer(
         output = image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)).float().cpu()
         output.requires_grad_(False)
         del image_encoder
-        return output
+        return output.to(self.device, dtype=self.dtype)
     def drop_latents(self, image_embedding: Tensor, text_embedding: Tensor) -> tuple[Tensor, Tensor]:
         dataset_config = self.config.dataset
         rand_num = random.random()

@@ -54,6 +54,12 @@ def expand_dim(x: Float[Tensor, "batch embed_dim"], sequence_length: int = -1) -
         return x
     return x[:, None, :].repeat([1, sequence_length, 1])
 
+class ShapeDebugger(fl.Module):
+    def forward(self, args: Tensor):
+        print("shapes")
+        for arg in args:
+            print(arg.shape)
+        return args
 class ImageCrossAttention(fl.Chain):
     def __init__(
         self,
@@ -92,6 +98,7 @@ class ImageCrossAttention(fl.Chain):
             key_contexts.append(
                 fl.Chain(
                     fl.UseContext(context="range_adapter", key="timestep_embedding"),
+                    ShapeDebugger(),
                     fl.Linear(
                         in_features=1280,
                         out_features=text_cross_attention.inner_dim,

@@ -106,13 +106,15 @@ class ImageCrossAttention(fl.Chain):
                         device=text_cross_attention.device,
                         dtype=text_cross_attention.dtype,
                     ),
-                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
                     ShapeDebugger(),
+                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
+                    ShapeDebugger()
                 )
             )
             query_contexts.append(
                 fl.Chain(
                     fl.UseContext(context="range_adapter", key="timestep_embedding"),
+                    ShapeDebugger(),
                     fl.Linear(
                         in_features=1280,
                         out_features=text_cross_attention.inner_dim,
@@ -120,7 +122,9 @@ class ImageCrossAttention(fl.Chain):
                         device=text_cross_attention.device,
                         dtype=text_cross_attention.dtype,
                     ),
-                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length))
+                    ShapeDebugger(),
+                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
+                    ShapeDebugger()
                 )
             )
 

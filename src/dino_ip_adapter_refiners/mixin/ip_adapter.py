@@ -68,8 +68,6 @@ class ImageCrossAttention(fl.Chain):
         use_timestep_embedding: bool = False,
         sequence_length: int = -1,
     ) -> None:
-        print("-------------------------------")
-        print(sequence_length)
         self._scale = scale
         self.sequence_length = sequence_length
         key_contexts: list[fl.Chain] = [
@@ -82,6 +80,7 @@ class ImageCrossAttention(fl.Chain):
                     device=text_cross_attention.device,
                     dtype=text_cross_attention.dtype,
                 ),
+                ShapeDebugger(),
             ),
         ]
         query_contexts: list[fl.Chain] = [
@@ -94,13 +93,13 @@ class ImageCrossAttention(fl.Chain):
                     device=text_cross_attention.device,
                     dtype=text_cross_attention.dtype,
                 ),
+                ShapeDebugger(),
             ),
         ]
         if use_timestep_embedding:
             key_contexts.append(
                 fl.Chain(
                     fl.UseContext(context="range_adapter", key="timestep_embedding"),
-                    ShapeDebugger(),
                     fl.Linear(
                         in_features=1280,
                         out_features=text_cross_attention.inner_dim,
@@ -108,7 +107,6 @@ class ImageCrossAttention(fl.Chain):
                         device=text_cross_attention.device,
                         dtype=text_cross_attention.dtype,
                     ),
-                    ShapeDebugger(),
                     fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
                     ShapeDebugger()
                 )
@@ -116,7 +114,6 @@ class ImageCrossAttention(fl.Chain):
             query_contexts.append(
                 fl.Chain(
                     fl.UseContext(context="range_adapter", key="timestep_embedding"),
-                    ShapeDebugger(),
                     fl.Linear(
                         in_features=1280,
                         out_features=text_cross_attention.inner_dim,
@@ -124,7 +121,6 @@ class ImageCrossAttention(fl.Chain):
                         device=text_cross_attention.device,
                         dtype=text_cross_attention.dtype,
                     ),
-                    ShapeDebugger(),
                     fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
                     ShapeDebugger()
                 )
@@ -275,7 +271,7 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
 
 
 class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None) -> None:
+    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None, finegrained: bool = True) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
 
@@ -304,7 +300,7 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             ]
         else:
             self.sub_adapters = [
-                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum)
+                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum, sequence_length=16 if finegrained else -1)
                  for cross_attn in filter(lambda attn: type(attn) != fl.SelfAttention, target.layers(fl.Attention))
             ]
         if weights is not None:

@@ -189,7 +189,6 @@ class BaseTrainer(
             image_embedding = image_encoder(cond_image)
             image_embedding = self.image_proj(image_embedding)
             negative_image_embedding = self.black_image_embedding()
-            print(image_embedding.device, image_embedding.shape, negative_image_embedding.device, negative_image_embedding.shape)
             image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
 

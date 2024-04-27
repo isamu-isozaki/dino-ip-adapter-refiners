@@ -329,7 +329,8 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
         self.image_proj.requires_grad_(enable)
         for sub_adapter in self.sub_adapters:
             sub_adapter.enable_gradients(enable)
-        self.unconditional_image_embedding.requires_grad_(enable)
+        if self.use_unconditional_image_embedding:
+            self.unconditional_image_embedding.requires_grad_(enable)
 
     def get_image_embedding(
         self, dino_embedding: torch.Tensor
@@ -374,6 +375,7 @@ class IPAdapterMixin(
             target=self.unet,
             image_proj=self.image_proj,
             only_image=self.config.dataset.only_image,
+            use_unconditional_image_embedding=self.config.ip_adapter.use_unconditional_image_embedding,
             weights=load_from_safetensors(self.config.extra_training.ip_adapter_checkpoint)
             if self.config.extra_training.ip_adapter_checkpoint is not None
             else None

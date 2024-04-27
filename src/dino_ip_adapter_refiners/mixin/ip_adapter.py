@@ -376,6 +376,8 @@ class IPAdapterMixin(
             image_proj=self.image_proj,
             only_image=self.config.dataset.only_image,
             use_unconditional_image_embedding=self.config.ip_adapter.use_unconditional_image_embedding,
+            use_timestep_embedding=self.config.ip_adapter.use_timestep_embedding,
+            weighted_sum=self.config.ip_adapter.weighted_sum,
             weights=load_from_safetensors(self.config.extra_training.ip_adapter_checkpoint)
             if self.config.extra_training.ip_adapter_checkpoint is not None
             else None

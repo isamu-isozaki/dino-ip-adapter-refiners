@@ -149,8 +149,6 @@ class WeightedSum(fl.Chain):
     def forward(self, *args: Tensor) -> Tensor:
         ref = self[0](*args)
         print("Weighted sum")
-        print(args)
-        print(self)
         print(ref.shape)
         print(self[1](*args).shape)
         output =  ref + self[1](*args)

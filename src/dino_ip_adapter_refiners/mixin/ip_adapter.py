@@ -68,6 +68,8 @@ class ImageCrossAttention(fl.Chain):
         use_timestep_embedding: bool = False,
         sequence_length: int = -1,
     ) -> None:
+        print("-------------------------------")
+        print(sequence_length)
         self._scale = scale
         self.sequence_length = sequence_length
         key_contexts: list[fl.Chain] = [

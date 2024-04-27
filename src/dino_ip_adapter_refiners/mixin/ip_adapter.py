@@ -107,6 +107,7 @@ class ImageCrossAttention(fl.Chain):
                         dtype=text_cross_attention.dtype,
                     ),
                     fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
+                    ShapeDebugger(),
                 )
             )
             query_contexts.append(

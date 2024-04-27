@@ -56,9 +56,9 @@ def expand_dim(x: Float[Tensor, "batch embed_dim"], sequence_length: int = -1) -
 
 class ShapeDebugger(fl.Module):
     def forward(self, args: Tensor):
-        print("shapes")
-        for arg in args:
-            print(arg.shape)
+        # print("shapes")
+        # for arg in args:
+        #     print(arg.shape)
         return args
 class ImageCrossAttention(fl.Chain):
     def __init__(

@@ -30,6 +30,8 @@ def register_model():
             for param_name, param in model.named_parameters():
                 if param.requires_grad:
                     print(param_name)
+                    print(param.shape)
+
             self.models[name] = ModelItem(
                 name=name, config=config, model=model, learnable_parameters=learnable_parameters
             )

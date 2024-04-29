@@ -26,6 +26,7 @@ def register_model():
                 # For all parameters we train in automatic mixed precision we want them to be in float32.
                 for learnable_parameter in learnable_parameters:
                     learnable_parameter.to(dtype=float32)
+            print("learnable params", [learnable_parameter.dtype for learnable_parameter in learnable_parameters])
             self.models[name] = ModelItem(
                 name=name, config=config, model=model, learnable_parameters=learnable_parameters
             )

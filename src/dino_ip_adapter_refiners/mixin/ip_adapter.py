@@ -338,6 +338,8 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             sub_adapter.to(dtype=float32)
             for module in sub_adapter.modules():
                 _init_learnable_weights(module, initializer_range)
+        if self.use_unconditional_image_embedding:
+            self.unconditional_image_embedding.to(dtype=float32)
     def enable_gradients(self, enable: bool) -> None:
         self.image_proj.requires_grad_(enable)
         for sub_adapter in self.sub_adapters:

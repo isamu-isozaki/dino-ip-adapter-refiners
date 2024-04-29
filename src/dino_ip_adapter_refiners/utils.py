@@ -21,10 +21,8 @@ def register_model():
             if config.requires_grad is not None:
                 model.requires_grad_(requires_grad=config.requires_grad)
             learnable_parameters = [param for param in model.parameters() if param.requires_grad]
-            print("automatic mixed precision", self.config.extra_training.automatic_mixed_precision)
             if not self.config.extra_training.automatic_mixed_precision:
                 model = model.to(dtype=self.dtype)
-            print("learnable params", [learnable_parameter.dtype for learnable_parameter in learnable_parameters])
             self.models[name] = ModelItem(
                 name=name, config=config, model=model, learnable_parameters=learnable_parameters
             )

@@ -31,7 +31,11 @@ def min_snr(
     """Compute the Min-SNR weight for each timestep. This supposes we're predicting the noise."""
     signal_to_noise_ratios = solver.signal_to_noise_ratios[timesteps]
     signal_to_noise_ratios = signal_to_noise_ratios.exp() ** 2
-    return torch.minimum(gamma / signal_to_noise_ratios, torch.ones_like(timesteps))
+    mse_loss_weights = (
+        torch.stack([signal_to_noise_ratios, gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0]
+        / signal_to_noise_ratios
+    )
+    return mse_loss_weights
 
 
 def scale_loss(

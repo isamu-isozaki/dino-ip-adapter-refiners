@@ -74,7 +74,7 @@ download_retry = 2
 download_timeout = 5
 
 [save_adapter]
-checkpoint_steps = 5000
+checkpoint_steps = 2500
 save_folder = "/home/isamu/checkpoints/default_fixed_amp"
 
 [test_ldm]

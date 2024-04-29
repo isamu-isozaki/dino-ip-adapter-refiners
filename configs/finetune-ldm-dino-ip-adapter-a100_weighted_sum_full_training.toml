@@ -29,7 +29,7 @@ initialize_model = true
 initializer_range = 0.02
 use_rescaler = true
 weighted_sum = false
-use_unconditional_image_embedding = true
+use_unconditional_image_embedding = false
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}
@@ -74,8 +74,8 @@ download_retry = 2
 download_timeout = 5
 
 [save_adapter]
-checkpoint_steps = 10000
-save_folder = "/home/isamu/checkpoints/uncond_default_fixed_amp"
+checkpoint_steps = 5000
+save_folder = "/home/isamu/checkpoints/default_fixed_amp"
 
 [test_ldm]
 num_inference_steps = 30

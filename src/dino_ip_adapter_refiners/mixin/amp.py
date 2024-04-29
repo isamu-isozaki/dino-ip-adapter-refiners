@@ -29,10 +29,6 @@ class AMPMixin(
             self.scaler.unscale_(self.optimizer)
         max_norm = self.config.training.gradient_clipping_max_norm or float("inf")
         self.grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.learnable_parameters, max_norm=max_norm).item()
-        for param in self.learnable_parameters:
-            if len(param.shape) == 3 and param.shape[0] == 1 and param.shape[1] == 16 and param.shape[2] == 768:
-                print(torch.norm(param.grad))
-                print(torch.norm(param.data))
 
         if self.scaler is None:
             self.optimizer.step()

@@ -75,7 +75,7 @@ download_timeout = 5
 
 [save_adapter]
 checkpoint_steps = 2500
-save_folder = "/home/isamu/checkpoints/default_minsnr"
+save_folder = "/home/isamu/checkpoints/default_minsnr_reproduction"
 
 [test_ldm]
 num_inference_steps = 30

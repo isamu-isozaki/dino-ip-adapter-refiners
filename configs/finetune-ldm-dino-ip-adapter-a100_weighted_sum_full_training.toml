@@ -75,7 +75,7 @@ download_timeout = 5
 
 [save_adapter]
 checkpoint_steps = 625
-save_folder = "/home/isamu/checkpoints/default_fixed_amp"
+save_folder = "/home/isamu/checkpoints/rescaler_higher_bs"
 
 [test_ldm]
 num_inference_steps = 30

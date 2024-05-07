@@ -5,6 +5,8 @@ import json
 from refiners.foundationals.clip.image_encoder import (
     CLIPImageEncoderH,
 )
+from refiners.fluxion import layers as fl
+
 from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (
     CLIPTextEncoderL,
 )
@@ -218,10 +220,8 @@ def generation_and_clip_score_calc(args):
     num_prompts = args.num_prompts
     num_images_per_prompt = args.num_images_per_prompt
     condition_scale = args.condition_scale
-    image_embedding_div_factor = args.image_embedding_div_factor
     generation_path = args.generation_path
     checkpoint_path = args.checkpoint_path
-    use_pooled_text_embedding = args.use_pooled_text_embedding
     use_timestep_embedding = args.use_timestep_embedding
 
     os.makedirs(generation_path, exist_ok=True)
@@ -251,6 +251,8 @@ def generation_and_clip_score_calc(args):
             .to(device, dtype=dtype)
             .eval()
         )
+        image_encoder.pop()
+        image_encoder.layer((-1), fl.Chain).pop()
     lda = (
         SD1Autoencoder()
         .load_from_safetensors("/home/isamu/refiners/tests/weights/lda.safetensors")
@@ -274,7 +276,6 @@ def generation_and_clip_score_calc(args):
             scale=1,
             use_unconditional_image_embedding = False,
             use_timestep_embedding=use_timestep_embedding,
-            image_encoder=image_encoder,
         )
         .inject()
         .to(device, dtype=dtype)
@@ -321,41 +322,25 @@ def generation_and_clip_score_calc(args):
                 if cond_image.mode != "RGB":
                     cond_image = cond_image.convert("RGB")
 
+                negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)))
+
                 # for each prompt generate `num_images_per_prompt` images
                 # TODO: remove this for loop, batch things up
                 for idx, prompt in enumerate(prompts):
                     conditional_embedding = text_encoder(prompt)
                     negative_embedding = text_encoder("")
-                    if use_pooled_text_embedding:
-                        assert isinstance(text_encoder, TextEncoderWithPoolingL)
-                        assert isinstance(negative_embedding, tuple)
-                        assert isinstance(negative_embedding[0], Tensor)
-                        assert isinstance(negative_embedding[1], Tensor)
-                        assert isinstance(conditional_embedding, tuple)
-                        assert isinstance(conditional_embedding[0], Tensor)
-                        assert isinstance(conditional_embedding[1], Tensor)
-                        clip_text_embedding = cat(
-                            tensors=(negative_embedding[0], conditional_embedding[0]),
-                            dim=0,
-                        )
-                        pooled_clip_text_embedding = cat(
-                            tensors=(negative_embedding[1], conditional_embedding[1]),
-                            dim=0,
-                        )
-                    else:
-                        assert isinstance(text_encoder, CLIPTextEncoderL)
-                        assert isinstance(negative_embedding, Tensor)
-                        assert isinstance(conditional_embedding, Tensor)
-                        clip_text_embedding = cat(
-                            tensors=(negative_embedding, conditional_embedding), dim=0
-                        )
 
-                    image_embedding = adapter.compute_image_embedding(
-                        adapter.preprocess_image(
-                            cond_image, (cond_resolution, cond_resolution)
-                        ).to(device, dtype=dtype),
-                        div_factor=image_embedding_div_factor,
+                    assert isinstance(text_encoder, CLIPTextEncoderL)
+                    assert isinstance(negative_embedding, Tensor)
+                    assert isinstance(conditional_embedding, Tensor)
+                    clip_text_embedding = cat(
+                        tensors=(negative_embedding, conditional_embedding), dim=0
                     )
+
+                    image_embedding = image_encoder(cond_image)
+                    image_embedding = adapter.image_proj(image_embedding)
+                    image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
+
                     # TODO: pool text according to end of text id for pooled text embeds if given option
                     for i in range(num_images_per_prompt):
                         file_path = os.path.join(
@@ -363,10 +348,6 @@ def generation_and_clip_score_calc(args):
                         )
                         x = randn(1, 4, 64, 64, device=device, dtype=dtype)
                         adapter.set_image_context(image_embedding)
-                        if use_pooled_text_embedding:
-                            adapter.set_pooled_text_embedding(
-                                pooled_clip_text_embedding
-                            )
                         for step in sd.steps:
                             x = sd(
                                 x=x,
@@ -403,11 +384,6 @@ def main() -> None:
         help=("Path for image generation"),
     )
     parser.add_argument(
-        "--use_pooled_text_embedding",
-        action="store_true",
-        help=("Use pooled embed"),
-    )
-    parser.add_argument(
         "--use_timestep_embedding",
         action="store_true",
         help=("Use timestep embed"),
@@ -429,12 +405,6 @@ def main() -> None:
         type=float,
         default=7.5,
         help=("Condition scale"),
-    )
-    parser.add_argument(
-        "--image_embedding_div_factor",
-        type=float,
-        default=1,
-        help=("Division factor by which to divide image embeddings"),
     )
     parser.add_argument(
         "--clip_image_encoder",

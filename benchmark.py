@@ -272,7 +272,7 @@ def generation_and_clip_score_calc(args):
         DinoIPAdapter(
             target=unet,
             weights=load_from_safetensors(checkpoint_path),
-            fine_grained=True,
+            finegrained=True,
             scale=1,
             use_unconditional_image_embedding = False,
             use_timestep_embedding=use_timestep_embedding,

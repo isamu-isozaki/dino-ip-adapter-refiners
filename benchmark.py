@@ -37,6 +37,7 @@ import numpy as np
 import argparse
 import pandas as pd
 import torchvision.transforms.functional as TF
+from torchvision.transforms import InterpolationMode
 
 
 def clip_transform(
@@ -325,6 +326,13 @@ def generation_and_clip_score_calc(args):
                 cond_image = PIL.Image.open(validation_image_paths[0])
                 if cond_image.mode != "RGB":
                     cond_image = cond_image.convert("RGB")
+                cond_image = image_to_tensor(cond_image).to(device, dtype=dtype)
+                cond_image = TF.resize(
+                    cond_image,
+                    size=cond_resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
+                )
                 cond_image = TF.center_crop(cond_image, cond_resolution)
                 cond_image = normalize(
                     cond_image,

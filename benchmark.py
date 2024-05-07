@@ -3,11 +3,9 @@
 import os
 import json
 from refiners.foundationals.clip.image_encoder import (
-    CLIPImageEncoderL,
     CLIPImageEncoderH,
 )
 from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (
-    TextEncoderWithPoolingL,
     CLIPTextEncoderL,
 )
 import PIL
@@ -15,10 +13,7 @@ import PIL.Image
 import torch
 from refiners.fluxion.utils import image_to_tensor, normalize
 from tqdm.auto import tqdm
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.image_prompt import (
-    SD1IPAdapter,
-    get_sd1_image_proj,
-)
+from dino_ip_adapter_refiners.mixin.ip_adapter import DinoIPAdapter
 from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
     SD1Autoencoder,
     SD1UNet,
@@ -270,23 +265,16 @@ def generation_and_clip_score_calc(args):
         .to(device, dtype=dtype)
         .eval()
     )
-    cross_attn_2d = unet.ensure_find(CrossAttentionBlock2d)
-    image_proj = get_sd1_image_proj(
-        image_encoder, unet, cross_attn_2d, True, True
-    ).eval()
 
     adapter = (
-        SD1IPAdapter(
+        DinoIPAdapter(
             target=unet,
             weights=load_from_safetensors(checkpoint_path),
-            strict=True,
             fine_grained=True,
             scale=1,
+            use_unconditional_image_embedding = False,
             use_timestep_embedding=use_timestep_embedding,
-            use_pooled_text_embedding=use_pooled_text_embedding,
             image_encoder=image_encoder,
-            image_proj=image_proj,
-            use_bias=True,
         )
         .inject()
         .to(device, dtype=dtype)
@@ -394,8 +382,6 @@ def generation_and_clip_score_calc(args):
     del image_encoder
     del lda
     del text_encoder
-    del cross_attn_2d
-    del image_proj
     del adapter
     calculate_clip_score(args)
 

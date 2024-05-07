@@ -271,10 +271,10 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
 
 
 class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None, finegrained: bool = True) -> None:
+    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None, finegrained: bool = True, scale: float = 1.0) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
-
+        self._scale = scale
         self._image_proj = [
             image_proj if image_proj is not None else PerceiverResampler(
                 latents_dim=768,
@@ -300,7 +300,7 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             ]
         else:
             self.sub_adapters = [
-                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum, sequence_length=16 if finegrained else -1)
+                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum, sequence_length=16 if finegrained else -1, scale=scale)
                  for cross_attn in filter(lambda attn: type(attn) != fl.SelfAttention, target.layers(fl.Attention))
             ]
         if weights is not None:
@@ -355,6 +355,15 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
     def set_image_context(self, image_embedding: torch.Tensor, /) -> None:
         self.set_context("ip_adapter", {"image_embedding": image_embedding})
 
+    @property
+    def scale(self) -> float:
+        return self._scale
+
+    @scale.setter
+    def scale(self, value: float) -> None:
+        self._scale = value
+        for sub_adapter in self.sub_adapters:
+            sub_adapter.scale = value
 
 class IPAdapterMixin(
     Generic[BatchT],

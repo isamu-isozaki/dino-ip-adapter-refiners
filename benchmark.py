@@ -323,7 +323,7 @@ def generation_and_clip_score_calc(args):
                 if cond_image.mode != "RGB":
                     cond_image = cond_image.convert("RGB")
 
-                negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)))
+                negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(device, dtype=dtype)))
 
                 # for each prompt generate `num_images_per_prompt` images
                 # TODO: remove this for loop, batch things up

@@ -5,6 +5,7 @@ import json
 from refiners.foundationals.clip.image_encoder import (
     CLIPImageEncoderH,
 )
+from torch import zeros
 from refiners.fluxion import layers as fl
 
 from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (

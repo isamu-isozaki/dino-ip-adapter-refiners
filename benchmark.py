@@ -36,6 +36,7 @@ import gc
 import numpy as np
 import argparse
 import pandas as pd
+import torchvision.transforms.functional as TF
 
 
 def clip_transform(
@@ -294,6 +295,8 @@ def generation_and_clip_score_calc(args):
     with torch.no_grad():
         gc.collect()
         torch.cuda.empty_cache()
+        negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(device, dtype=dtype)))
+
         for scale in tqdm(scales):
             scale_dir = os.path.join(generation_path, str(scale))
             os.makedirs(scale_dir, exist_ok=True)
@@ -322,8 +325,15 @@ def generation_and_clip_score_calc(args):
                 cond_image = PIL.Image.open(validation_image_paths[0])
                 if cond_image.mode != "RGB":
                     cond_image = cond_image.convert("RGB")
-
-                negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(device, dtype=dtype)))
+                cond_image = TF.center_crop(cond_image, cond_resolution)
+                cond_image = normalize(
+                    cond_image,
+                    mean=[0.48145466, 0.4578275, 0.40821073],
+                    std=[0.26862954, 0.26130258, 0.27577711],
+                )
+                image_embedding = image_encoder(cond_image)
+                image_embedding = adapter.image_proj(image_embedding)
+                image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
                 # for each prompt generate `num_images_per_prompt` images
                 # TODO: remove this for loop, batch things up
@@ -337,10 +347,6 @@ def generation_and_clip_score_calc(args):
                     clip_text_embedding = cat(
                         tensors=(negative_embedding, conditional_embedding), dim=0
                     )
-
-                    image_embedding = image_encoder(cond_image)
-                    image_embedding = adapter.image_proj(image_embedding)
-                    image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
                     # TODO: pool text according to end of text id for pooled text embeds if given option
                     for i in range(num_images_per_prompt):

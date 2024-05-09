@@ -247,6 +247,7 @@ def calculate_clip_score(args):
         output = df.to_dict()
     else:
         df = pd.DataFrame.from_dict(output)
+    print(output)
     with open(os.path.join(prompts_and_config, single_concept_json)) as f:
         data = json.load(f)
     text_encoder_l_with_projection = CLIPTextEncoderL(device=device, dtype=dtype)

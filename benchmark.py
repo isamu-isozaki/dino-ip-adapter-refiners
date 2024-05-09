@@ -244,7 +244,11 @@ def calculate_clip_score(args):
     }
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path)
-        output = df.to_dict()
+        df_output = df.to_dict()
+        for i in range(len(df_output["name"])):
+            for key in output:
+                output[key].append(df_output[key][i])
+
     else:
         df = pd.DataFrame.from_dict(output)
     print(output)

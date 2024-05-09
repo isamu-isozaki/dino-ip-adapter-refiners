@@ -234,6 +234,8 @@ def calculate_clip_score(args):
     num_prompts = args.num_prompts
     num_images_per_prompt = args.num_images_per_prompt
     generation_path = args.generation_path
+    generation_path = os.path.join(generation_path, args.checkpoint_path.split("/")[-2])
+    print("Evaluating from ", generation_path)
     csv_path = f"{args.output_path}/num_prompts_{num_prompts}_num_images_per_prompt_{num_images_per_prompt}.csv"
     output = {
         "name": [],
@@ -388,6 +390,9 @@ def generation_and_clip_score_calc(args):
     checkpoint_path = args.checkpoint_path
     use_timestep_embedding = args.use_timestep_embedding
 
+    os.makedirs(generation_path, exist_ok=True)
+    generation_path = os.path.join(generation_path, checkpoint_path.split("/")[-2])
+    print("Generating at ", generation_path)
     os.makedirs(generation_path, exist_ok=True)
 
     with open(os.path.join(prompts_and_config, single_concept_json)) as f:
@@ -556,7 +561,7 @@ def main() -> None:
     parser.add_argument(
         "--generation_path",
         type=str,
-        default="/home/isamu/generation",
+        default="/home/isamu/generations",
         help=("Path for image generation"),
     )
     parser.add_argument(

@@ -4,7 +4,10 @@ import os
 import json
 from refiners.foundationals.clip.image_encoder import (
     CLIPImageEncoderH,
+    CLIPImageEncoder
 )
+from torch import Tensor, device as Device, dtype as DType
+
 from torch import zeros
 from refiners.fluxion import layers as fl
 
@@ -38,6 +41,89 @@ import argparse
 import pandas as pd
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
+from typing import cast, TypeVar
+
+from jaxtyping import Float
+
+from refiners.fluxion.adapters.adapter import Adapter
+from refiners.fluxion.context import Contexts
+from refiners.foundationals.clip.tokenizer import CLIPTokenizer
+
+T = TypeVar("T", bound="CLIPTextEncoderG | CLIPTextEncoderL")
+
+class TextEncoderWithPoolingGeneral(fl.Chain, Adapter[T]):
+    def __init__(
+        self,
+        target: T,
+        projection: fl.Linear | None = None,
+        pool_features: int = 1280,
+        slice_target: bool = True
+    ) -> None:
+        with self.setup_adapter(target=target):
+            tokenizer = target.ensure_find(CLIPTokenizer)
+            super().__init__(
+                tokenizer,
+                fl.SetContext(
+                    context="text_encoder_pooling", key="end_of_text_index", callback=self.set_end_of_text_index
+                ),
+                target[1:-2] if slice_target else target[1:],
+                fl.Parallel(
+                    fl.Identity(),
+                    fl.Chain(
+                        target[-2:] if slice_target else fl.Identity(),
+                        projection
+                        or fl.Linear(
+                            in_features=pool_features,
+                            out_features=pool_features,
+                            bias=False,
+                            device=target.device,
+                            dtype=target.dtype,
+                        ),
+                        fl.Lambda(func=self.pool),
+                    ),
+                ),
+            )
+
+    def init_context(self) -> Contexts:
+        return {"text_encoder_pooling": {"end_of_text_index": []}}
+
+    def __call__(self, text: str) -> tuple[Float[Tensor, "1 77 embed_dim"], Float[Tensor, "1 embed_dim"]]:
+        return super().__call__(text)
+
+    @property
+    def tokenizer(self) -> CLIPTokenizer:
+        return self.ensure_find(CLIPTokenizer)
+
+    def set_end_of_text_index(self, end_of_text_index: list[int], tokens: Tensor) -> None:
+        position = (tokens == self.tokenizer.end_of_text_token_id).nonzero(as_tuple=True)[1][0].item()
+        end_of_text_index.append(cast(int, position))
+
+    def pool(self, x: Float[Tensor, "1 77 embed_dim"]) -> Float[Tensor, "1 embed_dim"]:
+        end_of_text_index = self.use_context(context_name="text_encoder_pooling").get("end_of_text_index", [])
+        assert len(end_of_text_index) == 1, "End of text index not found."
+        return x[:, end_of_text_index[0], :]
+
+
+class TextEncoderWithPoolingL(TextEncoderWithPoolingGeneral[CLIPTextEncoderL]):
+    def __init__(
+        self,
+        target: CLIPTextEncoderL,
+        projection: fl.Linear | None = None,
+    ) -> None:
+        super().__init__(target, projection, pool_features=768, slice_target=False)
+class CLIPImageEncoderL(CLIPImageEncoder):
+    def __init__(self, device: Device | str | None = None, dtype: DType | None = None) -> None:
+        super().__init__(
+            embedding_dim = 1024,
+            output_dim = 768,
+            patch_size = 14,
+            num_layers = 24,
+            num_attention_heads = 16,
+            feedforward_dim = 4096,
+            use_quick_gelu=True,
+            device=device,
+            dtype=dtype,
+        )
 
 
 def clip_transform(

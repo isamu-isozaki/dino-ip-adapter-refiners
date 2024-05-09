@@ -4,6 +4,8 @@ import os
 import json
 from refiners.foundationals.clip.image_encoder import (
     CLIPImageEncoderH,
+    ViTEmbeddings,
+    TransformerLayer
 )
 from torch import Tensor, device as Device, dtype as DType
 

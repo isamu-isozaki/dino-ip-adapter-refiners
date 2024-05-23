@@ -502,8 +502,8 @@ def generation_and_clip_score_calc(args):
                 cond_image = TF.center_crop(cond_image, cond_resolution)
                 cond_image = normalize(
                     cond_image,
-                    mean=[0.48145466, 0.4578275, 0.40821073],
-                    std=[0.26862954, 0.26130258, 0.27577711],
+                    mean=[0.48145466, 0.4578275, 0.40821073] if args.clip_image_encoder else [0.485, 0.456, 0.406],
+                    std=[0.26862954, 0.26130258, 0.27577711] if args.clip_image_encoder else [0.229, 0.224, 0.225],
                 )
                 image_embedding = image_encoder(cond_image)
                 image_embedding = adapter.image_proj(image_embedding)

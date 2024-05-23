@@ -65,6 +65,7 @@ LDA = "checkpoints/lda.safetensors"
 CLIP_TEXT_ENCODER = "checkpoints/CLIPTextEncoderL.safetensors"
 
 DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
+POPPED_DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain_popped.pth"
 LDA_EXT = "sd15_lda.pth"
 CLIP_TEXT_EXT = "CLIPL.pth"
 
@@ -169,6 +170,7 @@ class Uploads:
         __key__,
         __url__,
         encoded_image_dino,
+        encoded_image_popped_dino,
         encoded_image_lda,
         metadata,
         encoder_hidden_states=None
@@ -178,6 +180,7 @@ class Uploads:
             __key__,
             __url__,
             encoded_image_dino,
+            encoded_image_popped_dino,
             encoded_image_lda,
             metadata,
             encoder_hidden_states=encoder_hidden_states
@@ -195,11 +198,13 @@ class Uploads:
         __key__,
         __url__,
         encoded_image_dinos,
+        encoded_image_popped_dinos,
         encoded_image_ldas,
         metadatas,
         encoder_hidden_states=None
     ):
         encoded_image_dinos = torch.unbind(encoded_image_dinos)
+        encoded_image_popped_dinos = torch.unbind(encoded_image_popped_dinos)
         encoded_image_ldas = torch.unbind(encoded_image_ldas)
         if encoder_hidden_states is not None:
             encoder_hidden_states = torch.unbind(encoder_hidden_states)
@@ -208,16 +213,19 @@ class Uploads:
             __key__,
             __url__,
             encoded_image_dino,
+            encoded_image_popped_dino,
             encoded_image_lda,
             metadata,
         ) in enumerate(zip(
             __key__,
             __url__,
             encoded_image_dinos,
+            encoded_image_popped_dinos,
             encoded_image_ldas,
             metadatas,
         )):
             encoded_image_dino = encoded_image_dino.clone().to("cpu")
+            encoded_image_popped_dino = encoded_image_popped_dino.clone().to("cpu")
             encoded_image_lda = encoded_image_lda.clone().to("cpu")
             encoder_hidden_state = None
             if encoder_hidden_states is not None:
@@ -232,6 +240,7 @@ class Uploads:
             sample = {
                 "__key__": __key__,
                 DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_dino,
+                POPPED_DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_popped_dino,
                 LDA_EXT.lower(): encoded_image_lda,
                 "json": metadata,
             }
@@ -459,11 +468,15 @@ def main():
     lda.requires_grad_(False)
     lda.load_from_safetensors(LDA)
 
+    popped_image_encoder = DINOv2_large_reg().to("cuda")
+    popped_image_encoder.requires_grad_(False)
+    popped_image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
+    popped_image_encoder.pop()
+    popped_image_encoder.layer((-1), fl.Chain).pop()
+
     image_encoder = DINOv2_large_reg().to("cuda")
     image_encoder.requires_grad_(False)
     image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
-    image_encoder.pop()
-    image_encoder.layer((-1), fl.Chain).pop()
 
     shard_range = (
         "{"
@@ -557,13 +570,14 @@ def main():
                 image_ = TF.center_crop(image_, args.resolution)
                 image_ = normalize(
                     image_,
-                    mean=[0.48145466, 0.4578275, 0.40821073],
-                    std=[0.26862954, 0.26130258, 0.27577711],
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
                 )
                 all_images.append(image_)
 
             image = torch.stack(all_images)
             lda_image = torch.stack(lda_images)
+            encoded_image_popped_dino = popped_image_encoder(image)
             encoded_image_dino = image_encoder(image)
             encoded_image_lda = lda.encode(lda_image)
 
@@ -571,6 +585,7 @@ def main():
                 __key__,
                 __url__,
                 encoded_image_dino,
+                encoded_image_popped_dino,
                 encoded_image_lda,
                 metadata,
                 encoder_hidden_states=encoder_hidden_states

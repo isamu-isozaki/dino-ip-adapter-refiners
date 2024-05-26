@@ -611,7 +611,7 @@ def main():
                     "dinov2_vitl14_reg4_pretrain_popped.pth": dict["dinov2_vitl14_reg4_pretrain_popped.pth"],
                     "sd15_lda.pth": dict["sd15_lda.pth"],
                     "clipl.pth": dict["clipl.pth"],
-                    "metadata": dict["metadata"],
+                    "metadata": dict["json"],
                 }
             )
             .to_tuple("__key__", "__url__", "dinov2_vitl14_reg4_pretrain.pth", "dinov2_vitl14_reg4_pretrain_popped.pth", "sd15_lda.pth", "clipl.pth", "metadata")

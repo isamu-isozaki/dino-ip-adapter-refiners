@@ -628,7 +628,7 @@ def main():
                 logger.warning(
                     f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
                 )
-                print(encoded_image_dino[0].shape)
+                print(encoded_image_dinos[0].shape)
                 uploads.submit(
                     __key__,
                     __url__,

@@ -55,7 +55,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode
 from dotenv import dotenv_values
 from streaming import MDSWriter
-
+from torch import cat
 
 torch.set_float32_matmul_precision("high")
 torch.no_grad().__enter__()
@@ -624,18 +624,19 @@ def main():
             num_workers=0,
         )
         with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
-            for __key__, __url__, encoded_image_dino, encoded_image_popped_dino, encoded_image_lda, encoder_hidden_states, metadata in src:
+            for __key__, __url__, encoded_image_dinos, encoded_image_popped_dinos, encoded_image_ldas, encoder_hidden_states, metadata in src:
                 logger.warning(
                     f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
                 )
+                print(encoded_image_dino[0].shape)
                 uploads.submit(
                     __key__,
                     __url__,
-                    encoded_image_dino,
-                    encoded_image_popped_dino,
-                    encoded_image_lda,
+                    cat([encoded_image_dino[None, ...] for encoded_image_dino in encoded_image_dinos]),
+                    cat([encoded_image_popped_dino[None, ...] for encoded_image_popped_dino in encoded_image_popped_dinos]),
+                    cat([encoded_image_lda[None, ...] for encoded_image_lda in encoded_image_ldas]),
                     metadata,
-                    encoder_hidden_states=encoder_hidden_states
+                    encoder_hidden_states=cat([encoder_hidden_state[None, ...] for encoder_hidden_state in encoder_hidden_states])
                 )
 
 

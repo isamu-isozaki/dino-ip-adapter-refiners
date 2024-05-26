@@ -625,6 +625,9 @@ def main():
         )
         with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
             for __key__, __url__, encoded_image_dino, encoded_image_popped_dino, encoded_image_lda, encoder_hidden_states, metadata in src:
+                logger.warning(
+                    f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
+                )
                 uploads.submit(
                     __key__,
                     __url__,

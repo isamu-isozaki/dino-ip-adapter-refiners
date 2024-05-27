@@ -464,10 +464,6 @@ def main():
                 f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}"
             )
         logger.warning("************")
-    if args.encode_prompt:
-        text_encoder = CLIPTextEncoderL().to("cuda")
-        text_encoder.requires_grad_(False)
-        text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
     shard_range = (
         "{"
         + format_shard_number(args.start_shard)
@@ -479,6 +475,10 @@ def main():
 
     logger.warning(f"downloading shards {download_shards}")
     if not args.pre_encoded:
+        if args.encode_prompt:
+            text_encoder = CLIPTextEncoderL().to("cuda")
+            text_encoder.requires_grad_(False)
+            text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
         lda = SD1Autoencoder(
             device="cuda",
         )
@@ -629,7 +629,6 @@ def main():
                 logger.warning(
                     f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
                 )
-                print(encoded_image_dinos[0].shape)
                 uploads.submit(
                     __key__,
                     __url__,

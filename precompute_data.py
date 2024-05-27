@@ -603,7 +603,7 @@ def main():
             wds.WebDataset(
                 download_shards,
             )
-            .decode(wds.handle_extension("pth", wds.autodecode.torch_loads), handler=wds.ignore_and_continue),
+            .decode(wds.handle_extension("pth", wds.autodecode.torch_loads), handler=wds.ignore_and_continue)
             .map(
                 lambda dict: {
                     "__key__": dict["__key__"],

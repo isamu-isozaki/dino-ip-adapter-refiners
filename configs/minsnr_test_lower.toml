@@ -27,7 +27,7 @@ use_timestep_embedding = true
 fine_grained = true
 initialize_model = true
 initializer_range = 0.02
-use_rescaler = true
+use_rescaler = false
 weighted_sum = false
 use_unconditional_image_embedding = false
 

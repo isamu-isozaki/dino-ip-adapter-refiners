@@ -418,9 +418,9 @@ class IPAdapterMixin(
         if self.config.extra_training.ip_adapter_checkpoint is None:
             ip_adapter.initialize_weights(config.initializer_range)
         ip_adapter.enable_gradients(True)
-        self.image_proj = torch.complie(self.image_proj, backend="inductor")
-        self.unet = torch.complie(self.unet, backend="inductor")
-        ip_adapter = torch.complie(ip_adapter, backend="inductor")
+        self.image_proj = torch.compile(self.image_proj, backend="inductor")
+        self.unet = torch.compile(self.unet, backend="inductor")
+        ip_adapter = torch.compile(ip_adapter, backend="inductor")
         return ip_adapter
 
 

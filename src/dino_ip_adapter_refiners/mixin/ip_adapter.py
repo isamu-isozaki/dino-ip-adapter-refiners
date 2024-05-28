@@ -375,7 +375,6 @@ class IPAdapterMixin(
     def unet(self, config: ModelConfig) -> SD1UNet:
         unet = SD1UNet(in_channels=4, device=self.device, dtype=self.dtype)
         unet.load_from_safetensors(self.config.extra_training.unet_checkpoint)
-        unet = torch.compile(unet, backend="inductor")
         return unet
     @register_model()
     def image_proj(self, config: ModelConfig) -> PerceiverResampler:
@@ -401,7 +400,6 @@ class IPAdapterMixin(
         else:
             for module in image_proj.modules():
                 _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
-        image_proj = torch.compile(image_proj, backend="inductor")
         return image_proj
 
     @register_model()
@@ -420,7 +418,9 @@ class IPAdapterMixin(
         if self.config.extra_training.ip_adapter_checkpoint is None:
             ip_adapter.initialize_weights(config.initializer_range)
         ip_adapter.enable_gradients(True)
-        ip_adapter = torch.compile(ip_adapter, backend="inductor")
+        self.image_proj = torch.complie(self.image_proj, backend="inductor")
+        self.unet = torch.complie(self.unet, backend="inductor")
+        ip_adapter = torch.complie(ip_adapter, backend="inductor")
         return ip_adapter
 
 

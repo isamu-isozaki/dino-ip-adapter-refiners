@@ -305,13 +305,11 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             ]
         if weights is not None:
             with torch.no_grad():
-                image_proj_compiled = not isinstance(self.image_proj, PerceiverResampler)
-                if not image_proj_compiled:
-                    image_proj_state_dict: dict[str, Tensor] = {
-                        k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
-                    }
+                image_proj_state_dict: dict[str, Tensor] = {
+                    k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
+                }
 
-                    self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
+                self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
 
 
                 for i, cross_attn in enumerate(self.sub_adapters):
@@ -391,15 +389,8 @@ class IPAdapterMixin(
         )
         image_proj.to(dtype=float32)
         image_proj.requires_grad_(True)
-        if self.config.extra_training.ip_adapter_checkpoint is not None:
-            weights = load_from_safetensors(self.config.extra_training.ip_adapter_checkpoint)
-            image_proj_state_dict: dict[str, Tensor] = {
-                k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
-            }
-            image_proj.load_state_dict(image_proj_state_dict, strict=True)
-        else:
-            for module in image_proj.modules():
-                _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
+        for module in image_proj.modules():
+            _init_learnable_weights(module, self.config.ip_adapter.initializer_range)
         return image_proj
 
     @register_model()
@@ -418,6 +409,9 @@ class IPAdapterMixin(
         if self.config.extra_training.ip_adapter_checkpoint is None:
             ip_adapter.initialize_weights(config.initializer_range)
         ip_adapter.enable_gradients(True)
+        # self.image_proj = torch.compile(self.image_proj, backend="inductor")
+        # self.unet = torch.compile(self.unet, backend="inductor")
+        # ip_adapter = torch.compile(ip_adapter, backend="inductor")
         return ip_adapter
 
 

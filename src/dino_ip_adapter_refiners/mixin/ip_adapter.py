@@ -306,7 +306,7 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
         if weights is not None:
             with torch.no_grad():
                 image_proj_compiled = not isinstance(self.image_proj, PerceiverResampler)
-                if image_proj_compiled:
+                if not image_proj_compiled:
                     image_proj_state_dict: dict[str, Tensor] = {
                         k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
                     }

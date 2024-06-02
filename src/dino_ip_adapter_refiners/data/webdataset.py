@@ -91,7 +91,7 @@ class WebdatasetAdapter(BaseDataAdapter):
             wds.rename(
                 text_embedding="clipl.pth",
                 latent="sd15_lda.pth",
-                dino_embedding="dinov2_vitl14_reg4_pretrain.pth",
+                dino_embedding="dinov2_vitl14_reg4_pretrain_popped.pth",
                 handler=wds.warn_and_continue,
             ),
             wds.map(filter_keys(set(all_keys))),

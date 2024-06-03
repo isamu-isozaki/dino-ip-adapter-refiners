@@ -30,7 +30,7 @@ initializer_range = 0.02
 use_rescaler = false
 weighted_sum = false
 use_unconditional_image_embedding = false
-popped = false
+pop = false
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}

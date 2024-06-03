@@ -229,8 +229,9 @@ class BaseTrainer(
         cond_resolution = self.config.ip_adapter.resolution
         image_encoder = DINOv2_large_reg(self.device, self.dtype)
         image_encoder.load_from_safetensors(self.config.extra_training.image_encoder_checkpoint)
-        image_encoder.pop()
-        image_encoder.layer((-1), fl.Chain).pop()
+        if self.config.ip_adapter.pop:
+            image_encoder.pop()
+            image_encoder.layer((-1), fl.Chain).pop()
         output = image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)).float().cpu()
         output.requires_grad_(False)
         del image_encoder

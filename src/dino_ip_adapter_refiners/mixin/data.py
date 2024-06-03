@@ -10,7 +10,7 @@ class DataMixin(
     BaseMixin[BatchT]
 ):
     def __init__(self, config: Config):
-        self.dataloader_adapter = DataLoaderAdapter(config.dataset, config.training.batch_size)
+        self.dataloader_adapter = DataLoaderAdapter(config.dataset, config.training.batch_size, config.ip_adapter.pop)
         super().__init__(config)
     def get_item(self, index: int) -> BatchT:
         return self.dataloader_adapter.get_item(index)

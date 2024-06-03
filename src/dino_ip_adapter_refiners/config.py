@@ -29,6 +29,7 @@ class IPAdapterConfig(ModelConfig):
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
     use_unconditional_image_embedding: bool = True
+    pop: bool = False
 
 class IPTrainingConfig(TrainingConfig):
     automatic_mixed_precision: bool = (

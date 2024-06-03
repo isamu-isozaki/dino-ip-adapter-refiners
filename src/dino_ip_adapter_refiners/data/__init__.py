@@ -8,12 +8,12 @@ from typing import Any
 
 
 class DataLoaderAdapter:
-    def __init__(self, config: DatasetConfig, batch_size: int = 1):
+    def __init__(self, config: DatasetConfig, batch_size: int = 1, pop: bool = False):
         self.config = config
         if config.is_mosaic:
-            self.dataset = MosaicAdapter(config, batch_size=batch_size)
+            self.dataset = MosaicAdapter(config, batch_size=batch_size, pop=pop)
         elif config.is_webdataset:
-            self.dataset = WebdatasetAdapter(config, batch_size=batch_size)
+            self.dataset = WebdatasetAdapter(config, batch_size=batch_size, pop=pop)
         else:
             raise Exception("is_mosaic or is_webdataset must be true for the dataset")
         self.dataset_length = self.dataset.dataset_length

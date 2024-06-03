@@ -66,13 +66,14 @@ class Item:
 
 
 class WebdatasetAdapter(BaseDataAdapter):
-    def __init__(self, config: DatasetConfig, batch_size: int = 1):
+    def __init__(self, config: DatasetConfig, batch_size: int = 1, pop: bool = False):
         super().__init__(only_image=config.only_image)
         self.config = config
         self.batch_size = batch_size
         self.train_shards_path_or_url = config.train_shards_path_or_url
         self.dataset_length = config.dataset_length
         self.only_image = config.only_image
+        self.pop = pop
     def collate_fn_from_dict(self, batch: list[dict]) -> BatchOnlyImage | Batch:
         latents = cat(tensors=[item["latent"][None] for item in batch])
         dino_embeddings = cat([item["dino_embedding"][None] for item in batch])
@@ -91,7 +92,7 @@ class WebdatasetAdapter(BaseDataAdapter):
             wds.rename(
                 text_embedding="clipl.pth",
                 latent="sd15_lda.pth",
-                dino_embedding="dinov2_vitl14_reg4_pretrain_popped.pth",
+                dino_embedding="dinov2_vitl14_reg4_pretrain_popped.pth" if self.pop else "dinov2_vitl14_reg4_pretrain.pth",
                 handler=wds.warn_and_continue,
             ),
             wds.map(filter_keys(set(all_keys))),

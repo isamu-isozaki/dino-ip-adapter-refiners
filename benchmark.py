@@ -411,6 +411,11 @@ def generation_and_clip_score_calc(args):
             .to(device, dtype=dtype)
             .eval()
         )
+        for _ in range(3):
+            image_encoder.pop()
+        transformer_layers = image_encoder[-1]
+        assert isinstance(transformer_layers, fl.Chain) and len(transformer_layers) == 32
+        transformer_layers.pop()
     else:
         image_encoder = (
             DINOv2_large_reg()
@@ -420,8 +425,9 @@ def generation_and_clip_score_calc(args):
             .to(device, dtype=dtype)
             .eval()
         )
-        image_encoder.pop()
-        image_encoder.layer((-1), fl.Chain).pop()
+        if not args.no_pop:
+            image_encoder.pop()
+            image_encoder.layer((-1), fl.Chain).pop()
     lda = (
         SD1Autoencoder()
         .load_from_safetensors("/home/isamu/refiners/tests/weights/lda.safetensors")
@@ -602,6 +608,11 @@ def main() -> None:
         "--no_generation",
         action="store_true",
         help=("use clip image encoder"),
+    )
+    parser.add_argument(
+        "--no_pop",
+        action="store_true",
+        help=("Do not Pop image encoder"),
     )
     args = parser.parse_args()
     if args.no_generation:

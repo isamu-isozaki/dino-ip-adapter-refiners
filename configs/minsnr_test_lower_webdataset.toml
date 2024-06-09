@@ -46,7 +46,7 @@ gradient_clipping_max_norm=2.0
 [optimizer]
 optimizer = "AdamW8bit"  # "SGD", "Adam", "AdamW", "AdamW8bit", "Lion8bit"
 # learning_rate = 5e-4
-learning_rate = 1e-4
+learning_rate = 2e-4
 betas = [0.9, 0.999]
 eps = 1e-8
 weight_decay = 1e-2
@@ -77,7 +77,7 @@ shuffle_buffer_size = 1000
 
 [save_adapter]
 checkpoint_steps = 625
-save_folder = "/home/isamu/checkpoints/default_minsnr_even_lower_fixed_preprocessing_pop_1e_4_lr"
+save_folder = "/home/isamu/checkpoints/default_minsnr_even_lower_fixed_preprocessing_pop_2e_4_lr"
 
 [test_ldm]
 num_inference_steps = 30

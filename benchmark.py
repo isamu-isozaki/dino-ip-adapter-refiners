@@ -3,11 +3,16 @@
 import os
 import json
 from refiners.foundationals.clip.image_encoder import (
-    CLIPImageEncoderL,
     CLIPImageEncoderH,
+    ViTEmbeddings,
+    TransformerLayer
 )
+from torch import Tensor, device as Device, dtype as DType
+
+from torch import zeros
+from refiners.fluxion import layers as fl
+
 from refiners.foundationals.latent_diffusion.stable_diffusion_xl.text_encoder import (
-    TextEncoderWithPoolingL,
     CLIPTextEncoderL,
 )
 import PIL
@@ -15,10 +20,7 @@ import PIL.Image
 import torch
 from refiners.fluxion.utils import image_to_tensor, normalize
 from tqdm.auto import tqdm
-from refiners.foundationals.latent_diffusion.stable_diffusion_1.image_prompt import (
-    SD1IPAdapter,
-    get_sd1_image_proj,
-)
+from dino_ip_adapter_refiners.mixin.ip_adapter import DinoIPAdapter
 from refiners.foundationals.latent_diffusion.stable_diffusion_1.model import (
     SD1Autoencoder,
     SD1UNet,
@@ -38,6 +40,161 @@ import gc
 import numpy as np
 import argparse
 import pandas as pd
+import torchvision.transforms.functional as TF
+from torchvision.transforms import InterpolationMode
+from typing import cast, TypeVar
+
+from jaxtyping import Float
+
+from refiners.fluxion.adapters.adapter import Adapter
+from refiners.fluxion.context import Contexts
+from refiners.foundationals.clip.tokenizer import CLIPTokenizer
+
+T = TypeVar("T", bound="CLIPTextEncoderG | CLIPTextEncoderL")
+
+class TextEncoderWithPoolingGeneral(fl.Chain, Adapter[T]):
+    def __init__(
+        self,
+        target: T,
+        projection: fl.Linear | None = None,
+        pool_features: int = 1280,
+        slice_target: bool = True
+    ) -> None:
+        with self.setup_adapter(target=target):
+            tokenizer = target.ensure_find(CLIPTokenizer)
+            super().__init__(
+                tokenizer,
+                fl.SetContext(
+                    context="text_encoder_pooling", key="end_of_text_index", callback=self.set_end_of_text_index
+                ),
+                target[1:-2] if slice_target else target[1:],
+                fl.Parallel(
+                    fl.Identity(),
+                    fl.Chain(
+                        target[-2:] if slice_target else fl.Identity(),
+                        projection
+                        or fl.Linear(
+                            in_features=pool_features,
+                            out_features=pool_features,
+                            bias=False,
+                            device=target.device,
+                            dtype=target.dtype,
+                        ),
+                        fl.Lambda(func=self.pool),
+                    ),
+                ),
+            )
+
+    def init_context(self) -> Contexts:
+        return {"text_encoder_pooling": {"end_of_text_index": []}}
+
+    def __call__(self, text: str) -> tuple[Float[Tensor, "1 77 embed_dim"], Float[Tensor, "1 embed_dim"]]:
+        return super().__call__(text)
+
+    @property
+    def tokenizer(self) -> CLIPTokenizer:
+        return self.ensure_find(CLIPTokenizer)
+
+    def set_end_of_text_index(self, end_of_text_index: list[int], tokens: Tensor) -> None:
+        position = (tokens == self.tokenizer.end_of_text_token_id).nonzero(as_tuple=True)[1][0].item()
+        end_of_text_index.append(cast(int, position))
+
+    def pool(self, x: Float[Tensor, "1 77 embed_dim"]) -> Float[Tensor, "1 embed_dim"]:
+        end_of_text_index = self.use_context(context_name="text_encoder_pooling").get("end_of_text_index", [])
+        assert len(end_of_text_index) == 1, "End of text index not found."
+        return x[:, end_of_text_index[0], :]
+
+
+class TextEncoderWithPoolingL(TextEncoderWithPoolingGeneral[CLIPTextEncoderL]):
+    def __init__(
+        self,
+        target: CLIPTextEncoderL,
+        projection: fl.Linear | None = None,
+    ) -> None:
+        super().__init__(target, projection, pool_features=768, slice_target=False)
+class CLIPImageEncoder(fl.Chain):
+    """Contrastive Language-Image Pretraining (CLIP) image encoder.
+
+    See [[arXiv:2103.00020] Learning Transferable Visual Models From Natural Language Supervision](https://arxiv.org/abs/2103.00020)
+    for more details.
+    """
+
+    def __init__(
+        self,
+        image_size: int = 224,
+        embedding_dim: int = 768,
+        output_dim: int = 512,
+        patch_size: int = 32,
+        num_layers: int = 12,
+        num_attention_heads: int = 12,
+        feedforward_dim: int = 3072,
+        layer_norm_eps: float = 1e-5,
+        use_quick_gelu: bool = False,
+        device: Device | str | None = None,
+        dtype: DType | None = None,
+    ) -> None:
+        """Initialize a CLIP image encoder.
+
+        Args:
+            image_size: The size of the input image.
+            embedding_dim: The dimension of the embedding.
+            output_dim: The dimension of the output.
+            patch_size: The size of the patches.
+            num_layers: The number of layers.
+            num_attention_heads: The number of attention heads.
+            feedforward_dim: The dimension of the feedforward layer.
+            layer_norm_eps: The epsilon value for normalization.
+            device: The PyTorch device to use.
+            dtype: The PyTorch data type to use.
+        """
+        self.image_size = image_size
+        self.embedding_dim = embedding_dim
+        self.output_dim = output_dim
+        self.patch_size = patch_size
+        self.num_layers = num_layers
+        self.num_attention_heads = num_attention_heads
+        self.feedforward_dim = feedforward_dim
+        cls_token_pooling: Callable[[Tensor], Tensor] = lambda x: x[:, 0, :]
+        super().__init__(
+            ViTEmbeddings(
+                image_size=image_size, embedding_dim=embedding_dim, patch_size=patch_size, device=device, dtype=dtype
+            ),
+            fl.LayerNorm(normalized_shape=embedding_dim, eps=layer_norm_eps, device=device, dtype=dtype),
+            fl.Chain(
+                TransformerLayer(
+                    embedding_dim=embedding_dim,
+                    feedforward_dim=feedforward_dim,
+                    num_attention_heads=num_attention_heads,
+                    layer_norm_eps=layer_norm_eps,
+                    device=device,
+                    dtype=dtype,
+                )
+                for _ in range(num_layers)
+            ),
+            fl.Lambda(func=cls_token_pooling),
+            fl.LayerNorm(normalized_shape=embedding_dim, eps=layer_norm_eps, device=device, dtype=dtype),
+            fl.Linear(in_features=embedding_dim, out_features=output_dim, bias=False, device=device, dtype=dtype),
+        )
+        if use_quick_gelu:
+            for gelu, parent in self.walk(predicate=lambda m, _: isinstance(m, fl.GeLU)):
+                parent.replace(
+                    old_module=gelu,
+                    new_module=fl.GeLU(approximation=fl.GeLUApproximation.SIGMOID),
+                )
+
+class CLIPImageEncoderL(CLIPImageEncoder):
+    def __init__(self, device: Device | str | None = None, dtype: DType | None = None) -> None:
+        super().__init__(
+            embedding_dim = 1024,
+            output_dim = 768,
+            patch_size = 14,
+            num_layers = 24,
+            num_attention_heads = 16,
+            feedforward_dim = 4096,
+            use_quick_gelu=True,
+            device=device,
+            dtype=dtype,
+        )
 
 
 def clip_transform(
@@ -77,6 +234,8 @@ def calculate_clip_score(args):
     num_prompts = args.num_prompts
     num_images_per_prompt = args.num_images_per_prompt
     generation_path = args.generation_path
+    generation_path = os.path.join(generation_path, args.checkpoint_path.split("/")[-2])
+    print("Evaluating from ", generation_path)
     csv_path = f"{args.output_path}/num_prompts_{num_prompts}_num_images_per_prompt_{num_images_per_prompt}.csv"
     output = {
         "name": [],
@@ -87,7 +246,11 @@ def calculate_clip_score(args):
     }
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path)
-        output = df.to_dict()
+        df_output = df.to_dict()
+        for i in range(len(df_output["name"])):
+            for key in output:
+                output[key].append(df_output[key][i])
+
     else:
         df = pd.DataFrame.from_dict(output)
     with open(os.path.join(prompts_and_config, single_concept_json)) as f:
@@ -223,12 +386,13 @@ def generation_and_clip_score_calc(args):
     num_prompts = args.num_prompts
     num_images_per_prompt = args.num_images_per_prompt
     condition_scale = args.condition_scale
-    image_embedding_div_factor = args.image_embedding_div_factor
     generation_path = args.generation_path
     checkpoint_path = args.checkpoint_path
-    use_pooled_text_embedding = args.use_pooled_text_embedding
     use_timestep_embedding = args.use_timestep_embedding
 
+    os.makedirs(generation_path, exist_ok=True)
+    generation_path = os.path.join(generation_path, checkpoint_path.split("/")[-2])
+    print("Generating at ", generation_path)
     os.makedirs(generation_path, exist_ok=True)
 
     with open(os.path.join(prompts_and_config, single_concept_json)) as f:
@@ -247,6 +411,11 @@ def generation_and_clip_score_calc(args):
             .to(device, dtype=dtype)
             .eval()
         )
+        for _ in range(3):
+            image_encoder.pop()
+        transformer_layers = image_encoder[-1]
+        assert isinstance(transformer_layers, fl.Chain) and len(transformer_layers) == 32
+        transformer_layers.pop()
     else:
         image_encoder = (
             DINOv2_large_reg()
@@ -256,6 +425,9 @@ def generation_and_clip_score_calc(args):
             .to(device, dtype=dtype)
             .eval()
         )
+        if not args.no_pop:
+            image_encoder.pop()
+            image_encoder.layer((-1), fl.Chain).pop()
     lda = (
         SD1Autoencoder()
         .load_from_safetensors("/home/isamu/refiners/tests/weights/lda.safetensors")
@@ -270,23 +442,15 @@ def generation_and_clip_score_calc(args):
         .to(device, dtype=dtype)
         .eval()
     )
-    cross_attn_2d = unet.ensure_find(CrossAttentionBlock2d)
-    image_proj = get_sd1_image_proj(
-        image_encoder, unet, cross_attn_2d, True, True
-    ).eval()
 
     adapter = (
-        SD1IPAdapter(
+        DinoIPAdapter(
             target=unet,
             weights=load_from_safetensors(checkpoint_path),
-            strict=True,
-            fine_grained=True,
+            finegrained=True,
             scale=1,
+            use_unconditional_image_embedding = False,
             use_timestep_embedding=use_timestep_embedding,
-            use_pooled_text_embedding=use_pooled_text_embedding,
-            image_encoder=image_encoder,
-            image_proj=image_proj,
-            use_bias=True,
         )
         .inject()
         .to(device, dtype=dtype)
@@ -304,6 +468,8 @@ def generation_and_clip_score_calc(args):
     with torch.no_grad():
         gc.collect()
         torch.cuda.empty_cache()
+        negative_image_embedding = adapter.image_proj(image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(device, dtype=dtype)))
+
         for scale in tqdm(scales):
             scale_dir = os.path.join(generation_path, str(scale))
             os.makedirs(scale_dir, exist_ok=True)
@@ -332,42 +498,36 @@ def generation_and_clip_score_calc(args):
                 cond_image = PIL.Image.open(validation_image_paths[0])
                 if cond_image.mode != "RGB":
                     cond_image = cond_image.convert("RGB")
+                cond_image = image_to_tensor(cond_image).to(device, dtype=dtype)
+                cond_image = TF.resize(
+                    cond_image,
+                    size=cond_resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
+                )
+                cond_image = TF.center_crop(cond_image, cond_resolution)
+                cond_image = normalize(
+                    cond_image,
+                    mean=[0.48145466, 0.4578275, 0.40821073] if args.clip_image_encoder else [0.485, 0.456, 0.406],
+                    std=[0.26862954, 0.26130258, 0.27577711] if args.clip_image_encoder else [0.229, 0.224, 0.225],
+                )
+                image_embedding = image_encoder(cond_image)
+                image_embedding = adapter.image_proj(image_embedding)
+                image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
                 # for each prompt generate `num_images_per_prompt` images
                 # TODO: remove this for loop, batch things up
                 for idx, prompt in enumerate(prompts):
                     conditional_embedding = text_encoder(prompt)
                     negative_embedding = text_encoder("")
-                    if use_pooled_text_embedding:
-                        assert isinstance(text_encoder, TextEncoderWithPoolingL)
-                        assert isinstance(negative_embedding, tuple)
-                        assert isinstance(negative_embedding[0], Tensor)
-                        assert isinstance(negative_embedding[1], Tensor)
-                        assert isinstance(conditional_embedding, tuple)
-                        assert isinstance(conditional_embedding[0], Tensor)
-                        assert isinstance(conditional_embedding[1], Tensor)
-                        clip_text_embedding = cat(
-                            tensors=(negative_embedding[0], conditional_embedding[0]),
-                            dim=0,
-                        )
-                        pooled_clip_text_embedding = cat(
-                            tensors=(negative_embedding[1], conditional_embedding[1]),
-                            dim=0,
-                        )
-                    else:
-                        assert isinstance(text_encoder, CLIPTextEncoderL)
-                        assert isinstance(negative_embedding, Tensor)
-                        assert isinstance(conditional_embedding, Tensor)
-                        clip_text_embedding = cat(
-                            tensors=(negative_embedding, conditional_embedding), dim=0
-                        )
 
-                    image_embedding = adapter.compute_image_embedding(
-                        adapter.preprocess_image(
-                            cond_image, (cond_resolution, cond_resolution)
-                        ).to(device, dtype=dtype),
-                        div_factor=image_embedding_div_factor,
+                    assert isinstance(text_encoder, CLIPTextEncoderL)
+                    assert isinstance(negative_embedding, Tensor)
+                    assert isinstance(conditional_embedding, Tensor)
+                    clip_text_embedding = cat(
+                        tensors=(negative_embedding, conditional_embedding), dim=0
                     )
+
                     # TODO: pool text according to end of text id for pooled text embeds if given option
                     for i in range(num_images_per_prompt):
                         file_path = os.path.join(
@@ -375,10 +535,6 @@ def generation_and_clip_score_calc(args):
                         )
                         x = randn(1, 4, 64, 64, device=device, dtype=dtype)
                         adapter.set_image_context(image_embedding)
-                        if use_pooled_text_embedding:
-                            adapter.set_pooled_text_embedding(
-                                pooled_clip_text_embedding
-                            )
                         for step in sd.steps:
                             x = sd(
                                 x=x,
@@ -394,8 +550,6 @@ def generation_and_clip_score_calc(args):
     del image_encoder
     del lda
     del text_encoder
-    del cross_attn_2d
-    del image_proj
     del adapter
     calculate_clip_score(args)
 
@@ -413,13 +567,8 @@ def main() -> None:
     parser.add_argument(
         "--generation_path",
         type=str,
-        default="/home/isamu/generation",
+        default="/home/isamu/generations",
         help=("Path for image generation"),
-    )
-    parser.add_argument(
-        "--use_pooled_text_embedding",
-        action="store_true",
-        help=("Use pooled embed"),
     )
     parser.add_argument(
         "--use_timestep_embedding",
@@ -445,12 +594,6 @@ def main() -> None:
         help=("Condition scale"),
     )
     parser.add_argument(
-        "--image_embedding_div_factor",
-        type=float,
-        default=1,
-        help=("Division factor by which to divide image embeddings"),
-    )
-    parser.add_argument(
         "--clip_image_encoder",
         action="store_true",
         help=("use clip image encoder"),
@@ -465,6 +608,11 @@ def main() -> None:
         "--no_generation",
         action="store_true",
         help=("use clip image encoder"),
+    )
+    parser.add_argument(
+        "--no_pop",
+        action="store_true",
+        help=("Do not Pop image encoder"),
     )
     args = parser.parse_args()
     if args.no_generation:

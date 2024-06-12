@@ -49,6 +49,7 @@ from torch import (
     cat,
     randn,
 )
+import gc
 from loguru import logger
 
 BatchT = TypeVar("BatchT", bound="BatchOnlyImage | Batch")
@@ -161,8 +162,9 @@ class BaseTrainer(
         # for each prompt generate `num_images_per_prompt` images
         # TODO: remove this for loop, batch things up
         images: dict[str, WandbLoggable] = {}
-        for i in range(len(cond_images)):
-            images[f"condition images_{i}"] = cond_images[i]
+        if self.clock.step == 0:
+            for i in range(len(cond_images)):
+                images[f"condition images_{i}"] = cond_images[i]
         for prompt, cond_image in zip(prompts, cond_images):
             canvas_image = Image.new(mode="RGB", size=(512, 512 * num_images_per_prompt))
             conditional_embedding = text_encoder(prompt)
@@ -181,13 +183,12 @@ class BaseTrainer(
             cond_image = TF.center_crop(cond_image, cond_resolution)
             cond_image = normalize(
                 cond_image,
-                mean=[0.48145466, 0.4578275, 0.40821073],
-                std=[0.26862954, 0.26130258, 0.27577711],
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
             )
             image_embedding = image_encoder(cond_image)
             image_embedding = self.image_proj(image_embedding)
-            negative_image_embedding = self.black_image_embedding
-
+            negative_image_embedding = self.black_image_embedding()
             image_embedding = cat(tensors=(negative_image_embedding, image_embedding), dim=0)
 
 
@@ -211,6 +212,8 @@ class BaseTrainer(
         del text_encoder
         del lda
         del image_encoder
+        torch.cuda.empty_cache()
+        gc.collect()
     @cached_property
     @no_grad()
     def empty_text_embedding(self) -> Tensor:
@@ -222,36 +225,39 @@ class BaseTrainer(
         return output
     @cached_property
     @no_grad()
-    def black_image_embedding(self) -> Tensor:
-        if self.config.ip_adapter.use_unconditional_image_embedding:
-            return self.ip_adapter.unconditional_image_embedding
+    def black_dino_image_embedding(self) -> Tensor:
         cond_resolution = self.config.ip_adapter.resolution
         image_encoder = DINOv2_large_reg(self.device, self.dtype)
         image_encoder.load_from_safetensors(self.config.extra_training.image_encoder_checkpoint)
-        image_encoder.pop()
-        image_encoder.layer((-1), fl.Chain).pop()
+        if self.config.ip_adapter.pop:
+            image_encoder.pop()
+            image_encoder.layer((-1), fl.Chain).pop()
         output = image_encoder(zeros((1, 3, cond_resolution, cond_resolution)).to(self.device, dtype=self.dtype)).float().cpu()
         output.requires_grad_(False)
         del image_encoder
-        return output
+        return output.to(self.device, dtype=self.dtype)
+    def black_image_embedding(self) -> Tensor:
+        if self.config.ip_adapter.use_unconditional_image_embedding:
+            return self.ip_adapter.unconditional_image_embedding
+        return self.image_proj(self.black_dino_image_embedding)
     def drop_latents(self, image_embedding: Tensor, text_embedding: Tensor) -> tuple[Tensor, Tensor]:
         dataset_config = self.config.dataset
         rand_num = random.random()
         if rand_num < dataset_config.image_drop_rate:
-            image_embedding = self.black_image_embedding
+            image_embedding = self.black_image_embedding()
         elif rand_num < (dataset_config.image_drop_rate + dataset_config.text_drop_rate):
             text_embedding = self.empty_text_embedding
         elif rand_num < (
             dataset_config.image_drop_rate + dataset_config.text_drop_rate + dataset_config.text_and_image_drop_rate
         ):
             text_embedding = self.empty_text_embedding
-            image_embedding = self.black_image_embedding
+            image_embedding = self.black_image_embedding()
         return image_embedding, text_embedding
     def drop_image_latents(self, image_embedding: Tensor) -> Tensor:
         dataset_config = self.config.dataset
         rand_num = random.random()
         if rand_num < dataset_config.image_drop_rate + dataset_config.text_and_image_drop_rate:
-            image_embedding = self.black_image_embedding
+            image_embedding = self.black_image_embedding()
         return image_embedding
 
 def compute_loss(self: BaseTrainer[BatchT], batch: BatchT, only_image: bool = False):

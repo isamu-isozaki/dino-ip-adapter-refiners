@@ -29,6 +29,7 @@ class IPAdapterConfig(ModelConfig):
     timestep_bias_end: int = 1000
     timestep_bias_multiplier: float = 1.0
     use_unconditional_image_embedding: bool = True
+    pop: bool = False
 
 class IPTrainingConfig(TrainingConfig):
     automatic_mixed_precision: bool = (
@@ -65,6 +66,7 @@ class DatasetConfig(BaseModel):
     predownload: int = 1000
     download_retry: int = 2
     download_timeout: float = 120
+    shuffle_buffer_size: int = 1000
 
 class TestIPDiffusionConfig(TestDiffusionConfig):
     """Configuration to test the diffusion model, during the `evaluation` loop of the trainer."""

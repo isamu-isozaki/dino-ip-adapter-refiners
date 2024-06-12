@@ -18,6 +18,7 @@ from refiners.training_utils import ModelConfig
 from refiners.foundationals.latent_diffusion import SD1UNet
 from refiners.fluxion.layers.attentions import ScaledDotProductAttention
 from jaxtyping import Float
+from refiners.fluxion.utils import load_from_safetensors
 
 # Adapted from https://github.com/huggingface/open-muse
 def _init_learnable_weights(module: Module, initializer_range: float):
@@ -53,6 +54,12 @@ def expand_dim(x: Float[Tensor, "batch embed_dim"], sequence_length: int = -1) -
         return x
     return x[:, None, :].repeat([1, sequence_length, 1])
 
+class ShapeDebugger(fl.Module):
+    def forward(self, args: Tensor):
+        # print("shapes")
+        # for arg in args:
+        #     print(arg.shape)
+        return args
 class ImageCrossAttention(fl.Chain):
     def __init__(
         self,
@@ -73,6 +80,7 @@ class ImageCrossAttention(fl.Chain):
                     device=text_cross_attention.device,
                     dtype=text_cross_attention.dtype,
                 ),
+                ShapeDebugger(),
             ),
         ]
         query_contexts: list[fl.Chain] = [
@@ -85,6 +93,7 @@ class ImageCrossAttention(fl.Chain):
                     device=text_cross_attention.device,
                     dtype=text_cross_attention.dtype,
                 ),
+                ShapeDebugger(),
             ),
         ]
         if use_timestep_embedding:
@@ -99,6 +108,7 @@ class ImageCrossAttention(fl.Chain):
                         dtype=text_cross_attention.dtype,
                     ),
                     fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
+                    ShapeDebugger()
                 )
             )
             query_contexts.append(
@@ -111,7 +121,8 @@ class ImageCrossAttention(fl.Chain):
                         device=text_cross_attention.device,
                         dtype=text_cross_attention.dtype,
                     ),
-                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length))
+                    fl.Lambda(lambda x: expand_dim(x, sequence_length=sequence_length)),
+                    ShapeDebugger()
                 )
             )
 
@@ -147,6 +158,9 @@ class WeightedSum(fl.Chain):
 
     def forward(self, *args: Tensor) -> Tensor:
         ref = self[0](*args)
+        # print("Weighted sum")
+        # print(ref.shape)
+        # print(self[1](*args).shape)
         output =  ref + self[1](*args)
         return (output / output.norm()) * ref.norm()
 
@@ -257,10 +271,10 @@ class CrossAttentionAdapterOnlyImage(fl.Chain, Adapter[CrossAttentionBlock]):
 
 
 class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
-    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None) -> None:
+    def __init__(self, target: SD1UNet, image_proj: PerceiverResampler | None = None, unconditional_image_embedding: Tensor | None = None,  use_timestep_embedding: bool = False, use_unconditional_image_embedding: bool = True, only_image: bool = False, weighted_sum: bool = True, weights: dict[str, Tensor] | None = None, finegrained: bool = True, scale: float = 1.0) -> None:
         with self.setup_adapter(target):
             super().__init__(target)
-
+        self._scale = scale
         self._image_proj = [
             image_proj if image_proj is not None else PerceiverResampler(
                 latents_dim=768,
@@ -286,27 +300,28 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             ]
         else:
             self.sub_adapters = [
-                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum)
+                 CrossAttentionAdapter(cross_attn, use_timestep_embedding=use_timestep_embedding, weighted_sum=weighted_sum, sequence_length=16 if finegrained else -1, scale=scale)
                  for cross_attn in filter(lambda attn: type(attn) != fl.SelfAttention, target.layers(fl.Attention))
             ]
         if weights is not None:
-            image_proj_state_dict: dict[str, Tensor] = {
-                k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
-            }
+            with torch.no_grad():
+                image_proj_state_dict: dict[str, Tensor] = {
+                    k.removeprefix("image_proj."): v for k, v in weights.items() if k.startswith("image_proj.")
+                }
 
-            self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
+                self.image_proj.load_state_dict(image_proj_state_dict, strict=True)
 
 
-            for i, cross_attn in enumerate(self.sub_adapters):
-                cross_attention_weights: dict[str, Tensor] = {}
-                for k, v in weights.items():
-                    prefix = f"ip_adapter.{i:03d}."
-                    if not k.startswith(prefix):
-                        continue
-                    cross_attention_weights[k[len(prefix):]] = v
-                cross_attn.load_state_dict(cross_attention_weights, strict=False)
-            if use_unconditional_image_embedding:
-                self.unconditional_image_embedding = weights["unconditional_image_embedding"]
+                for i, cross_attn in enumerate(self.sub_adapters):
+                    cross_attention_weights: dict[str, Tensor] = {}
+                    for k, v in weights.items():
+                        prefix = f"ip_adapter.{i:03d}."
+                        if not k.startswith(prefix):
+                            continue
+                        cross_attention_weights[k[len(prefix):]] = v
+                    cross_attn.load_state_dict(cross_attention_weights, strict=False)
+                if use_unconditional_image_embedding:
+                    self.unconditional_image_embedding.copy_(weights["unconditional_image_embedding"].float())
 
     @property
     def image_proj(self) -> PerceiverResampler:
@@ -323,11 +338,14 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
             sub_adapter.to(dtype=float32)
             for module in sub_adapter.modules():
                 _init_learnable_weights(module, initializer_range)
+        if self.use_unconditional_image_embedding:
+            self.unconditional_image_embedding.to(dtype=float32)
     def enable_gradients(self, enable: bool) -> None:
         self.image_proj.requires_grad_(enable)
         for sub_adapter in self.sub_adapters:
             sub_adapter.enable_gradients(enable)
-        self.unconditional_image_embedding.requires_grad_(enable)
+        if self.use_unconditional_image_embedding:
+            self.unconditional_image_embedding.requires_grad_(enable)
 
     def get_image_embedding(
         self, dino_embedding: torch.Tensor
@@ -337,6 +355,15 @@ class DinoIPAdapter(Adapter[SD1UNet], fl.Chain):
     def set_image_context(self, image_embedding: torch.Tensor, /) -> None:
         self.set_context("ip_adapter", {"image_embedding": image_embedding})
 
+    @property
+    def scale(self) -> float:
+        return self._scale
+
+    @scale.setter
+    def scale(self, value: float) -> None:
+        self._scale = value
+        for sub_adapter in self.sub_adapters:
+            sub_adapter.scale = value
 
 class IPAdapterMixin(
     Generic[BatchT],
@@ -371,10 +398,17 @@ class IPAdapterMixin(
         ip_adapter = DinoIPAdapter(
             target=self.unet,
             image_proj=self.image_proj,
-            only_image=self.config.dataset.only_image
+            only_image=self.config.dataset.only_image,
+            use_unconditional_image_embedding=self.config.ip_adapter.use_unconditional_image_embedding,
+            use_timestep_embedding=self.config.ip_adapter.use_timestep_embedding,
+            weighted_sum=self.config.ip_adapter.weighted_sum,
+            weights=load_from_safetensors(self.config.extra_training.ip_adapter_checkpoint)
+            if self.config.extra_training.ip_adapter_checkpoint is not None
+            else None
         ).inject()
+        if self.config.extra_training.ip_adapter_checkpoint is None:
+            ip_adapter.initialize_weights(config.initializer_range)
         ip_adapter.enable_gradients(True)
-        ip_adapter.initialize_weights(config.initializer_range)
         return ip_adapter
 
 

@@ -55,7 +55,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode
 from dotenv import dotenv_values
 from streaming import MDSWriter
-
+from torch import cat
 
 torch.set_float32_matmul_precision("high")
 torch.no_grad().__enter__()
@@ -65,6 +65,7 @@ LDA = "checkpoints/lda.safetensors"
 CLIP_TEXT_ENCODER = "checkpoints/CLIPTextEncoderL.safetensors"
 
 DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain.pth"
+POPPED_DINO_IMAGE_ENCODER_EXT = "dinov2_vitl14_reg4_pretrain_popped.pth"
 LDA_EXT = "sd15_lda.pth"
 CLIP_TEXT_EXT = "CLIPL.pth"
 
@@ -121,7 +122,7 @@ class Uploads:
     because writes are not thread safe and can corrupt the archive.
     """
 
-    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="", encode_prompt=False):
+    def __init__(self, skip_upload, upload_to, num_writing_threads, use_mosaic=False, compression="zstd", encode_prompt=False):
         self.open_lock = Lock()
         self.uploads = OrderedDict()
         self.skip_upload = skip_upload
@@ -169,6 +170,7 @@ class Uploads:
         __key__,
         __url__,
         encoded_image_dino,
+        encoded_image_popped_dino,
         encoded_image_lda,
         metadata,
         encoder_hidden_states=None
@@ -178,6 +180,7 @@ class Uploads:
             __key__,
             __url__,
             encoded_image_dino,
+            encoded_image_popped_dino,
             encoded_image_lda,
             metadata,
             encoder_hidden_states=encoder_hidden_states
@@ -195,11 +198,13 @@ class Uploads:
         __key__,
         __url__,
         encoded_image_dinos,
+        encoded_image_popped_dinos,
         encoded_image_ldas,
         metadatas,
         encoder_hidden_states=None
     ):
         encoded_image_dinos = torch.unbind(encoded_image_dinos)
+        encoded_image_popped_dinos = torch.unbind(encoded_image_popped_dinos)
         encoded_image_ldas = torch.unbind(encoded_image_ldas)
         if encoder_hidden_states is not None:
             encoder_hidden_states = torch.unbind(encoder_hidden_states)
@@ -208,16 +213,19 @@ class Uploads:
             __key__,
             __url__,
             encoded_image_dino,
+            encoded_image_popped_dino,
             encoded_image_lda,
             metadata,
         ) in enumerate(zip(
             __key__,
             __url__,
             encoded_image_dinos,
+            encoded_image_popped_dinos,
             encoded_image_ldas,
             metadatas,
         )):
             encoded_image_dino = encoded_image_dino.clone().to("cpu")
+            encoded_image_popped_dino = encoded_image_popped_dino.clone().to("cpu")
             encoded_image_lda = encoded_image_lda.clone().to("cpu")
             encoder_hidden_state = None
             if encoder_hidden_states is not None:
@@ -232,6 +240,7 @@ class Uploads:
             sample = {
                 "__key__": __key__,
                 DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_dino,
+                POPPED_DINO_IMAGE_ENCODER_EXT.lower(): encoded_image_popped_dino,
                 LDA_EXT.lower(): encoded_image_lda,
                 "json": metadata,
             }
@@ -388,7 +397,11 @@ def main():
     parser.add_argument(
         "--compression",
         type=str,
-        default=""
+        default="zstd"
+    )
+    parser.add_argument(
+        "--pre_encoded",
+        action="store_true"
     )
 
     args = parser.parse_args()
@@ -409,7 +422,10 @@ def main():
         raise ValueError("`--resolution` must be >= 1")
 
     if args.dataset == "photo_concept":
-        args.dataset = PHOTO_CONCEPT
+        if not args.pre_encoded:
+            args.dataset = PHOTO_CONCEPT
+        else:
+            args.dataset = PHOTO_CONCEPT_PREENCODED
         upload_to = PHOTO_CONCEPT_PREENCODED
     else:
         assert False
@@ -448,23 +464,6 @@ def main():
                 f"slurm process: {slurm_proc_id_}, start_shard: {start_shard}, end_shard: {end_shard}"
             )
         logger.warning("************")
-    if args.encode_prompt:
-        text_encoder = CLIPTextEncoderL().to("cuda")
-        text_encoder.requires_grad_(False)
-        text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
-
-    lda = SD1Autoencoder(
-        device="cuda",
-    )
-    lda.requires_grad_(False)
-    lda.load_from_safetensors(LDA)
-
-    image_encoder = DINOv2_large_reg().to("cuda")
-    image_encoder.requires_grad_(False)
-    image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
-    image_encoder.pop()
-    image_encoder.layer((-1), fl.Chain).pop()
-
     shard_range = (
         "{"
         + format_shard_number(args.start_shard)
@@ -475,106 +474,170 @@ def main():
     download_shards = f"pipe:gsutil cp {args.dataset}/{shard_range}.tar -"
 
     logger.warning(f"downloading shards {download_shards}")
-
-    src = (
-        wds.WebDataset(
-            download_shards,
+    if not args.pre_encoded:
+        if args.encode_prompt:
+            text_encoder = CLIPTextEncoderL().to("cuda")
+            text_encoder.requires_grad_(False)
+            text_encoder.load_from_safetensors(CLIP_TEXT_ENCODER)
+        lda = SD1Autoencoder(
+            device="cuda",
         )
-        .decode("pil", handler=wds.warn_and_continue)
-        .rename(image="jpg;png;jpeg;webp", prompt="text;txt;caption", metadata="json")
-        .map(
-            lambda dict: {
-                "__key__": dict["__key__"],
-                "__url__": dict["__url__"],
-                "image": dict["image"],
-                "prompt": dict["prompt"],
-                "metadata": dict["metadata"],
-            }
+        lda.requires_grad_(False)
+        lda.load_from_safetensors(LDA)
+
+        popped_image_encoder = DINOv2_large_reg().to("cuda")
+        popped_image_encoder.requires_grad_(False)
+        popped_image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
+        popped_image_encoder.pop()
+        popped_image_encoder.layer((-1), fl.Chain).pop()
+
+        image_encoder = DINOv2_large_reg().to("cuda")
+        image_encoder.requires_grad_(False)
+        image_encoder.load_from_safetensors(DINO_IMAGE_ENCODER)
+
+
+        src = (
+            wds.WebDataset(
+                download_shards,
+            )
+            .decode("pil", handler=wds.warn_and_continue)
+            .rename(image="jpg;png;jpeg;webp", prompt="text;txt;caption", metadata="json")
+            .map(
+                lambda dict: {
+                    "__key__": dict["__key__"],
+                    "__url__": dict["__url__"],
+                    "image": dict["image"],
+                    "prompt": dict["prompt"],
+                    "metadata": dict["metadata"],
+                }
+            )
+            .to_tuple("__key__", "__url__", "image", "prompt", "metadata")
+            .batched(args.batch_size)
         )
-        .to_tuple("__key__", "__url__", "image", "prompt", "metadata")
-        .batched(args.batch_size)
-    )
-    src = DataLoader(
-        src,
-        batch_size=None,
-        shuffle=False,
-        num_workers=0,
-    )
+        src = DataLoader(
+            src,
+            batch_size=None,
+            shuffle=False,
+            num_workers=0,
+        )
 
-    with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
-        for __key__, __url__, image, prompt, metadata in src:
-            logger.warning(
-                f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
+        with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
+            for __key__, __url__, image, prompt, metadata in src:
+                logger.warning(
+                    f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
+                )
+                encoder_hidden_states = None
+                if args.encode_prompt:
+                    encoder_hidden_states = text_encoder(prompt)
+                all_images = []
+                lda_images = []
+
+                for image_ in image:
+                    # The following is minorly more efficient than the default
+                    # torchvision to_tensor and lets use move to cuda earlier :P
+                    mode = image_.mode
+                    if mode != "RGB":
+                        image_ = image_.convert("RGB")
+
+                    height = image_.height
+                    width = image_.width
+
+                    if hasattr(image_, "getbands"):
+                        channels = len(image_.getbands())
+                    else:
+                        channels = image_.channels
+
+                    nptype = np.uint8
+
+                    image_ = np.array(image_, nptype)
+                    image_ = torch.from_numpy(image_)
+                    image_: torch.Tensor = image_.to("cuda")
+
+                    image_ = image_.view(height, width, channels)
+                    image_ = image_.permute((2, 0, 1)).contiguous()
+
+                    image_ = image_.to(dtype=torch.float32).div(255)
+
+                    lda_image_ = TF.resize(
+                        image_,
+                        size=args.lda_resolution,
+                        interpolation=InterpolationMode.BILINEAR,
+                        antialias=True,
+                    )
+
+                    lda_image_ = TF.center_crop(lda_image_, args.lda_resolution)
+                    lda_images.append(2 * lda_image_ - 1)
+                    image_ = TF.resize(
+                        image_,
+                        size=args.resolution,
+                        interpolation=InterpolationMode.BILINEAR,
+                        antialias=True,
+                    )
+
+                    image_ = TF.center_crop(image_, args.resolution)
+                    image_ = normalize(
+                        image_,
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    )
+                    all_images.append(image_)
+
+                image = torch.stack(all_images)
+                lda_image = torch.stack(lda_images)
+                encoded_image_dino = image_encoder(image)
+                encoded_image_popped_dino = popped_image_encoder(image)
+                encoded_image_lda = lda.encode(lda_image)
+
+                uploads.submit(
+                    __key__,
+                    __url__,
+                    encoded_image_dino,
+                    encoded_image_popped_dino,
+                    encoded_image_lda,
+                    metadata,
+                    encoder_hidden_states=encoder_hidden_states
+                )
+    else:
+        assert args.encode_prompt
+        src = (
+            wds.WebDataset(
+                download_shards,
             )
-            encoder_hidden_states = None
-            if args.encode_prompt:
-                encoder_hidden_states = text_encoder(prompt)
-            all_images = []
-            lda_images = []
-
-            for image_ in image:
-                # The following is minorly more efficient than the default
-                # torchvision to_tensor and lets use move to cuda earlier :P
-                mode = image_.mode
-                if mode != "RGB":
-                    image_ = image_.convert("RGB")
-
-                height = image_.height
-                width = image_.width
-
-                if hasattr(image_, "getbands"):
-                    channels = len(image_.getbands())
-                else:
-                    channels = image_.channels
-
-                nptype = np.uint8
-
-                image_ = np.array(image_, nptype)
-                image_ = torch.from_numpy(image_)
-                image_: torch.Tensor = image_.to("cuda")
-
-                image_ = image_.view(height, width, channels)
-                image_ = image_.permute((2, 0, 1)).contiguous()
-
-                image_ = image_.to(dtype=torch.float32).div(255)
-
-                lda_image_ = TF.resize(
-                    image_,
-                    size=args.lda_resolution,
-                    interpolation=InterpolationMode.BILINEAR,
-                    antialias=True,
-                )
-
-                lda_image_ = TF.center_crop(lda_image_, args.lda_resolution)
-                lda_images.append(2 * lda_image_ - 1)
-                image_ = TF.resize(
-                    image_,
-                    size=args.resolution,
-                    interpolation=InterpolationMode.BILINEAR,
-                    antialias=True,
-                )
-
-                image_ = TF.center_crop(image_, args.resolution)
-                image_ = normalize(
-                    image_,
-                    mean=[0.48145466, 0.4578275, 0.40821073],
-                    std=[0.26862954, 0.26130258, 0.27577711],
-                )
-                all_images.append(image_)
-
-            image = torch.stack(all_images)
-            lda_image = torch.stack(lda_images)
-            encoded_image_dino = image_encoder(image)
-            encoded_image_lda = lda.encode(lda_image)
-
-            uploads.submit(
-                __key__,
-                __url__,
-                encoded_image_dino,
-                encoded_image_lda,
-                metadata,
-                encoder_hidden_states=encoder_hidden_states
+            .decode(wds.handle_extension("pth", wds.autodecode.torch_loads), handler=wds.ignore_and_continue)
+            .map(
+                lambda dict: {
+                    "__key__": dict["__key__"],
+                    "__url__": dict["__url__"],
+                    "dinov2_vitl14_reg4_pretrain.pth": dict["dinov2_vitl14_reg4_pretrain.pth"],
+                    "dinov2_vitl14_reg4_pretrain_popped.pth": dict["dinov2_vitl14_reg4_pretrain_popped.pth"],
+                    "sd15_lda.pth": dict["sd15_lda.pth"],
+                    "clipl.pth": dict["clipl.pth"],
+                    "metadata": dict["json"],
+                }
             )
+            .to_tuple("__key__", "__url__", "dinov2_vitl14_reg4_pretrain.pth", "dinov2_vitl14_reg4_pretrain_popped.pth", "sd15_lda.pth", "clipl.pth", "metadata")
+            .batched(args.batch_size)
+        )
+        src = DataLoader(
+            src,
+            batch_size=None,
+            shuffle=False,
+            num_workers=0,
+        )
+        with Uploads(args.skip_upload, upload_to, args.num_writing_threads, use_mosaic=args.use_mosaic, compression=args.compression, encode_prompt=args.encode_prompt) as uploads:
+            for __key__, __url__, encoded_image_dinos, encoded_image_popped_dinos, encoded_image_ldas, encoder_hidden_states, metadata in src:
+                logger.warning(
+                    f"Encoding {len(__key__)} examples: {__key__[0]} to {__key__[-1]}."
+                )
+                uploads.submit(
+                    __key__,
+                    __url__,
+                    cat([encoded_image_dino[None, ...] for encoded_image_dino in encoded_image_dinos]),
+                    cat([encoded_image_popped_dino[None, ...] for encoded_image_popped_dino in encoded_image_popped_dinos]),
+                    cat([encoded_image_lda[None, ...] for encoded_image_lda in encoded_image_ldas]),
+                    metadata,
+                    encoder_hidden_states=cat([encoder_hidden_state[None, ...] for encoder_hidden_state in encoder_hidden_states])
+                )
 
 
 if __name__ == "__main__":

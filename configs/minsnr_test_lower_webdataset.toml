@@ -9,9 +9,9 @@ unet_checkpoint = "checkpoints/unet.safetensors"
 text_encoder_checkpoint = "checkpoints/CLIPTextEncoderL.safetensors"
 lda_checkpoint = "checkpoints/lda.safetensors"
 image_encoder_checkpoint = "checkpoints/dinov2_vitl14_reg4_pretrain.safetensors"
-# ip_adapter_checkpoint = "/home/isamu/checkpoints/uncond_not_weighted/step60000.safetensors"
+ip_adapter_checkpoint = "/home/isamu/checkpoints/default_minsnr_even_lower_fixed_preprocessing_pop_1e_4_lr/step21250.safetensors"
 input_pertubation = 0.0
-loss_scaler="legacy"
+loss_scaler="min_snr_5"
 
 [unet]
 requires_grad = false
@@ -27,9 +27,10 @@ use_timestep_embedding = true
 fine_grained = true
 initialize_model = true
 initializer_range = 0.02
-use_rescaler = true
+use_rescaler = false
 weighted_sum = false
 use_unconditional_image_embedding = false
+pop = true
 
 [training]
 duration = {"number" = 100000000, "unit" = "step"}
@@ -63,19 +64,20 @@ image_drop_rate = 0.05
 text_drop_rate = 0.05
 text_and_image_drop_rate = 0.05
 cache_dir = "/home/isamu/tmp"
-shuffle = false
+shuffle = true
 cache_limit = "150gb"
-is_mosaic = true
-is_webdataset = false
+is_mosaic = false
+is_webdataset = true
 only_image = false
 dataset_workers = 4
 predownload = 15000
 download_retry = 2
 download_timeout = 5
+shuffle_buffer_size = 1000
 
 [save_adapter]
 checkpoint_steps = 625
-save_folder = "/home/isamu/checkpoints/rescaler_higher_bs"
+save_folder = "/home/isamu/checkpoints/default_minsnr_even_lower_fixed_preprocessing_pop_1e_4_lr_resumed"
 
 [test_ldm]
 num_inference_steps = 30

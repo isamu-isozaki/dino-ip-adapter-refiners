@@ -6,7 +6,7 @@ authors = [
     { name = "isamu", email = "isamu.website@gmail.com" }
 ]
 dependencies = [
-    "refiners[training] @ git+https://github.com/finegrain-ai/refiners.git@2b48988c078a1f570aeaf9366074f5cc77921599",
+    "refiners[training] @ git+https://github.com/isamu-isozaki/refiners.git@7dea5450fe3c9197fb20e66356d9dbe6ab4cff89",
     "tqdm>=4.66.2",
     "python-dotenv>=1.0.1",
     "webdataset>=0.2.86",

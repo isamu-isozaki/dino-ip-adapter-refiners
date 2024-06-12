@@ -8,6 +8,7 @@ from refiners.fluxion.utils import no_grad
 from refiners.training_utils.common import (
     scoped_seed,
 )
+import torch
 # from https://github.com/finegrain-ai/refiners/pull/290
 class AMPMixin(
     Generic[BatchT],
@@ -28,6 +29,7 @@ class AMPMixin(
             self.scaler.unscale_(self.optimizer)
         max_norm = self.config.training.gradient_clipping_max_norm or float("inf")
         self.grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.learnable_parameters, max_norm=max_norm).item()
+
         if self.scaler is None:
             self.optimizer.step()
             return

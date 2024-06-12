@@ -17,14 +17,12 @@ def register_model():
         def wrapper(self: AbstractTrainer[Config, Any], config: ModelConfigT) -> fl.Module:
             name = func.__name__
             model = func(self, config)
-            model = model.to(self.device, dtype=self.dtype)
+            model = model.to(self.device)
             if config.requires_grad is not None:
                 model.requires_grad_(requires_grad=config.requires_grad)
             learnable_parameters = [param for param in model.parameters() if param.requires_grad]
-            if self.config.extra_training.automatic_mixed_precision:
-                # For all parameters we train in automatic mixed precision we want them to be in float32.
-                for learnable_parameter in learnable_parameters:
-                    learnable_parameter.to(dtype=float32)
+            if not self.config.extra_training.automatic_mixed_precision:
+                model = model.to(dtype=self.dtype)
             self.models[name] = ModelItem(
                 name=name, config=config, model=model, learnable_parameters=learnable_parameters
             )
